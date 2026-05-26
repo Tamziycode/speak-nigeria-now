@@ -13,10 +13,10 @@ export const Route = createFileRoute("/api/transcribe")({
         new Response(null, { status: 204, headers: corsHeaders }),
       POST: async ({ request }) => {
         try {
-          const apiKey = process.env.OPENAI_API_KEY;
+          const apiKey = process.env.GROQ_API_KEY;
           if (!apiKey) {
             return new Response(
-              JSON.stringify({ error: "OPENAI_API_KEY not configured" }),
+              JSON.stringify({ error: "GROQ_API_KEY not configured" }),
               { status: 500, headers: { "Content-Type": "application/json", ...corsHeaders } },
             );
           }
@@ -34,20 +34,21 @@ export const Route = createFileRoute("/api/transcribe")({
           }
 
           const upstream = new FormData();
-          upstream.append("file", file, file.name || "audio.webm");
-          upstream.append("model", "whisper-1");
+          upstream.append("file", file, file.name || "audio.wav");
+          upstream.append("model", "whisper-large-v3");
           upstream.append("response_format", "json");
           if (language) upstream.append("language", language);
           if (prompt) upstream.append("prompt", prompt);
 
           const res = await fetch(
-            "https://api.openai.com/v1/audio/transcriptions",
+            "https://api.groq.com/openai/v1/audio/transcriptions",
             {
               method: "POST",
               headers: { Authorization: `Bearer ${apiKey}` },
               body: upstream,
             },
           );
+
 
           const text = await res.text();
           return new Response(text, {

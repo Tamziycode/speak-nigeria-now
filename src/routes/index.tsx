@@ -338,7 +338,7 @@ function RecordButton({
     return (
       <button
         onClick={onStop}
-        className="inline-flex h-14 min-w-[220px] items-center justify-center gap-2.5 rounded-full bg-red-600 px-7 text-sm font-semibold text-white shadow-sm transition hover:bg-red-700"
+        className="inline-flex h-14 min-w-[220px] items-center justify-center gap-2.5 rounded-full bg-destructive px-7 text-sm font-semibold text-destructive-foreground shadow-[var(--shadow-elegant)] transition hover:opacity-90"
       >
         <span className="relative flex h-2.5 w-2.5">
           <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-white opacity-75" />
@@ -356,13 +356,15 @@ function RecordButton({
   return (
     <button
       onClick={onStart}
-      className="inline-flex h-14 min-w-[220px] items-center justify-center gap-2.5 rounded-full bg-foreground px-7 text-sm font-semibold text-background shadow-sm transition hover:opacity-90"
+      style={{ background: "var(--gradient-primary)", boxShadow: "var(--shadow-elegant)" }}
+      className="inline-flex h-14 min-w-[220px] items-center justify-center gap-2.5 rounded-full px-7 text-sm font-semibold text-primary-foreground transition hover:opacity-90"
     >
       <Mic className="h-4 w-4" />
       Start Recording
     </button>
   );
 }
+
 
 function Banner({
   tone,
