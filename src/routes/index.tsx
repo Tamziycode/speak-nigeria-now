@@ -83,6 +83,8 @@ function Index() {
     setError(null);
     setWarning(null);
     setTranscript(null);
+    setWer(null);
+
     setPermissionDenied(false);
 
     try {
@@ -178,7 +180,12 @@ function Index() {
         return;
       }
 
-      setTranscript(json);
+      const text =
+        typeof (json as { text?: unknown }).text === "string"
+          ? ((json as { text: string }).text.trim())
+          : "";
+      setTranscript({ text, raw: json });
+      setWer(null);
       setState("idle");
     } catch (e) {
       console.error(e);
@@ -189,10 +196,16 @@ function Index() {
 
   const handleCopy = async () => {
     if (!transcript) return;
-    await navigator.clipboard.writeText(JSON.stringify(transcript, null, 2));
+    await navigator.clipboard.writeText(transcript.text);
     setCopied(true);
     setTimeout(() => setCopied(false), 1500);
   };
+
+  const handleCalculateWER = () => {
+    if (!transcript?.text || !groundTruth.trim()) return;
+    setWer(computeWER(groundTruth, transcript.text));
+  };
+
 
   const formatTime = (s: number) => {
     const m = Math.floor(s / 60).toString().padStart(2, "0");
