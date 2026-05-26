@@ -11,6 +11,8 @@ import {
   CircleDot,
 } from "lucide-react";
 import { blobTo16kWav } from "@/lib/recorder";
+import { computeWER, type WERResult } from "@/lib/wer";
+
 
 export const Route = createFileRoute("/")({
   component: Index,
@@ -47,7 +49,10 @@ function Index() {
   const [language, setLanguage] = useState("pcm");
   const [state, setState] = useState<RecState>("idle");
   const [elapsed, setElapsed] = useState(0);
-  const [transcript, setTranscript] = useState<unknown>(null);
+  const [transcript, setTranscript] = useState<{ text: string; raw: unknown } | null>(null);
+  const [groundTruth, setGroundTruth] = useState("");
+  const [wer, setWer] = useState<WERResult | null>(null);
+
   const [error, setError] = useState<string | null>(null);
   const [warning, setWarning] = useState<string | null>(null);
   const [permissionDenied, setPermissionDenied] = useState(false);
