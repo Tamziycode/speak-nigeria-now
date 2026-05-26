@@ -26,16 +26,20 @@ export const Route = createFileRoute("/")({
   }),
 });
 
-const LANGUAGES: { label: string; code: string; whisper?: string }[] = [
-  { label: "Nigerian Pidgin", code: "pcm" },
-  { label: "Hausa", code: "ha" },
-  { label: "Yoruba", code: "yo" },
-  { label: "Igbo", code: "ig" },
-  { label: "Fulfulde", code: "ff" },
-  { label: "Kanuri", code: "kr" },
-  { label: "Ibibio", code: "ibb" },
-  { label: "Tiv", code: "tiv" },
+// `supported: true` = native Groq Whisper language code.
+// Unsupported languages are still selectable (for logging/UX) but we omit the
+// `language` field on the API call and let Whisper auto-detect.
+const LANGUAGES: { label: string; code: string; supported: boolean }[] = [
+  { label: "Nigerian Pidgin", code: "pcm", supported: false },
+  { label: "Hausa", code: "ha", supported: true },
+  { label: "Yoruba", code: "yo", supported: true },
+  { label: "Igbo", code: "ig", supported: false },
+  { label: "Fulfulde", code: "ff", supported: false },
+  { label: "Kanuri", code: "kr", supported: false },
+  { label: "Ibibio", code: "ibb", supported: false },
+  { label: "Tiv", code: "tiv", supported: false },
 ];
+
 
 type RecState = "idle" | "recording" | "processing";
 
@@ -137,7 +141,7 @@ function Index() {
       const form = new FormData();
       form.append("file", new File([wav], "audio.wav", { type: "audio/wav" }));
       const lang = LANGUAGES.find((l) => l.code === language);
-      if (lang) form.append("language", lang.code);
+      if (lang?.supported) form.append("language", lang.code);
 
       const controller = new AbortController();
       slowWarnRef.current = window.setTimeout(() => {
@@ -157,13 +161,18 @@ function Index() {
 
       const json = await res.json().catch(() => ({ error: "Invalid response" }));
       if (!res.ok) {
-        setError(
-          (json as { error?: string }).error ||
-            `Request failed (${res.status})`,
-        );
+        const errField = (json as { error?: unknown }).error;
+        const msg =
+          typeof errField === "string"
+            ? errField
+            : errField && typeof errField === "object" && "message" in errField
+              ? String((errField as { message: unknown }).message)
+              : `Request failed (${res.status})`;
+        setError(msg);
         setState("idle");
         return;
       }
+
       setTranscript(json);
       setState("idle");
     } catch (e) {
