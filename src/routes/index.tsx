@@ -11,6 +11,8 @@ import {
   CircleDot,
 } from "lucide-react";
 import { blobTo16kWav } from "@/lib/recorder";
+import { computeWER, type WERResult } from "@/lib/wer";
+
 
 export const Route = createFileRoute("/")({
   component: Index,
@@ -47,7 +49,10 @@ function Index() {
   const [language, setLanguage] = useState("pcm");
   const [state, setState] = useState<RecState>("idle");
   const [elapsed, setElapsed] = useState(0);
-  const [transcript, setTranscript] = useState<unknown>(null);
+  const [transcript, setTranscript] = useState<{ text: string; raw: unknown } | null>(null);
+  const [groundTruth, setGroundTruth] = useState("");
+  const [wer, setWer] = useState<WERResult | null>(null);
+
   const [error, setError] = useState<string | null>(null);
   const [warning, setWarning] = useState<string | null>(null);
   const [permissionDenied, setPermissionDenied] = useState(false);
@@ -78,6 +83,8 @@ function Index() {
     setError(null);
     setWarning(null);
     setTranscript(null);
+    setWer(null);
+
     setPermissionDenied(false);
 
     try {
@@ -173,7 +180,12 @@ function Index() {
         return;
       }
 
-      setTranscript(json);
+      const text =
+        typeof (json as { text?: unknown }).text === "string"
+          ? ((json as { text: string }).text.trim())
+          : "";
+      setTranscript({ text, raw: json });
+      setWer(null);
       setState("idle");
     } catch (e) {
       console.error(e);
@@ -184,10 +196,16 @@ function Index() {
 
   const handleCopy = async () => {
     if (!transcript) return;
-    await navigator.clipboard.writeText(JSON.stringify(transcript, null, 2));
+    await navigator.clipboard.writeText(transcript.text);
     setCopied(true);
     setTimeout(() => setCopied(false), 1500);
   };
+
+  const handleCalculateWER = () => {
+    if (!transcript?.text || !groundTruth.trim()) return;
+    setWer(computeWER(groundTruth, transcript.text));
+  };
+
 
   const formatTime = (s: number) => {
     const m = Math.floor(s / 60).toString().padStart(2, "0");
@@ -305,20 +323,153 @@ function Index() {
                   )}
                 </button>
               </div>
-              <pre className="min-h-[140px] whitespace-pre-wrap break-words font-mono text-sm leading-relaxed text-foreground">
-                {transcript
-                  ? JSON.stringify(transcript, null, 2)
-                  : state === "processing"
-                    ? "…"
-                    : "// Awaiting transcription"}
-              </pre>
+              {transcript?.text ? (
+                <p className="min-h-[140px] whitespace-pre-wrap break-words text-base leading-relaxed text-foreground">
+                  {transcript.text}
+                </p>
+              ) : (
+                <p className="min-h-[140px] text-sm italic text-muted-foreground">
+                  {state === "processing"
+                    ? "Transcribing…"
+                    : transcript
+                      ? "(empty transcript)"
+                      : "Awaiting transcription"}
+                </p>
+              )}
             </div>
           </div>
+
+          {/* Evaluation Metrics */}
+          {transcript?.text && (
+            <EvaluationCard
+              groundTruth={groundTruth}
+              setGroundTruth={setGroundTruth}
+              wer={wer}
+              onCalculate={handleCalculateWER}
+            />
+          )}
         </section>
       </main>
     </div>
   );
 }
+
+function EvaluationCard({
+  groundTruth,
+  setGroundTruth,
+  wer,
+  onCalculate,
+}: {
+  groundTruth: string;
+  setGroundTruth: (v: string) => void;
+  wer: WERResult | null;
+  onCalculate: () => void;
+}) {
+  const pct = wer ? Math.round(wer.wer * 1000) / 10 : null;
+  const badge = pct === null ? null : readinessBadge(pct);
+
+  return (
+    <div className="w-full">
+      <div className="rounded-lg border border-border bg-card p-5 shadow-sm">
+        <h2 className="mb-3 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+          Evaluation Metrics
+        </h2>
+
+        <label
+          htmlFor="ground-truth"
+          className="mb-2 block text-xs font-medium text-foreground"
+        >
+          Ground Truth (Reference Text)
+        </label>
+        <textarea
+          id="ground-truth"
+          value={groundTruth}
+          onChange={(e) => setGroundTruth(e.target.value)}
+          rows={4}
+          placeholder="Paste the verified reference transcription here…"
+          className="w-full resize-y rounded-md border border-border bg-background px-3 py-2 text-sm leading-relaxed text-foreground shadow-sm transition focus:border-ring focus:outline-none focus:ring-1 focus:ring-ring"
+        />
+
+        <button
+          type="button"
+          onClick={onCalculate}
+          disabled={!groundTruth.trim()}
+          style={{ background: "var(--gradient-primary)" }}
+          className="mt-3 inline-flex h-10 items-center justify-center rounded-md px-5 text-sm font-semibold text-primary-foreground shadow-sm transition hover:opacity-90 disabled:opacity-40"
+        >
+          Calculate WER
+        </button>
+
+        {wer && pct !== null && badge && (
+          <div className="mt-5 border-t border-border pt-5">
+            <div className="flex items-baseline gap-3">
+              <span className="text-4xl font-semibold tabular-nums text-foreground">
+                {pct.toFixed(1)}%
+              </span>
+              <span className="text-xs uppercase tracking-wider text-muted-foreground">
+                Word Error Rate
+              </span>
+            </div>
+
+            <dl className="mt-4 grid grid-cols-4 gap-3 text-center text-xs">
+              <Metric label="Substitutions" value={wer.substitutions} />
+              <Metric label="Deletions" value={wer.deletions} />
+              <Metric label="Insertions" value={wer.insertions} />
+              <Metric label="Ref. Words" value={wer.referenceWords} />
+            </dl>
+
+            <div
+              className={`mt-4 inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-semibold ${badge.classes}`}
+            >
+              <span className={`h-1.5 w-1.5 rounded-full ${badge.dot}`} />
+              {badge.label}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function Metric({ label, value }: { label: string; value: number }) {
+  return (
+    <div className="rounded-md border border-border bg-background py-2">
+      <div className="font-mono text-base font-semibold tabular-nums text-foreground">
+        {value}
+      </div>
+      <div className="mt-0.5 text-[10px] uppercase tracking-wider text-muted-foreground">
+        {label}
+      </div>
+    </div>
+  );
+}
+
+function readinessBadge(pct: number) {
+  if (pct <= 10)
+    return {
+      label: "Highly Accurate · Ready for Production",
+      classes: "border-emerald-300 bg-emerald-50 text-emerald-800",
+      dot: "bg-emerald-500",
+    };
+  if (pct <= 20)
+    return {
+      label: "Acceptable · Requires Minor Correction UI",
+      classes: "border-amber-300 bg-amber-50 text-amber-800",
+      dot: "bg-amber-500",
+    };
+  if (pct <= 35)
+    return {
+      label: "Poor · Requires Model Fine-tuning",
+      classes: "border-orange-300 bg-orange-50 text-orange-800",
+      dot: "bg-orange-500",
+    };
+  return {
+    label: "Failure · Not Viable for Commercial Use",
+    classes: "border-red-300 bg-red-50 text-red-800",
+    dot: "bg-red-500",
+  };
+}
+
 
 function RecordButton({
   state,
