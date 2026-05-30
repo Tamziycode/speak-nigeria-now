@@ -411,9 +411,9 @@ function Index() {
             </div>
           </div>
 
-          {/* English Translation (Whisper-translatable languages only) */}
-          {transcript?.text &&
-            LANGUAGES.find((l) => l.code === language)?.translatable && (
+          {/* English Translation — all languages */}
+          {transcript?.text && (
+            
               <div className="w-full">
                 <div className="rounded-lg border border-border bg-card p-5 shadow-sm">
                   <div className="mb-3 flex items-center justify-between">
