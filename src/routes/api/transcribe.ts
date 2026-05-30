@@ -100,15 +100,8 @@ export const Route = createFileRoute("/api/transcribe")({
             });
           }
 
-          // ===== NLLB-200 text translation via HuggingFace =====
+          // ===== Text translation via LLM (HF router + Groq fallback) =====
           if (provider === "nllb") {
-            const hfToken = process.env.HF_TOKEN;
-            if (!hfToken) {
-              return new Response(
-                JSON.stringify({ error: "HF_TOKEN not configured" }),
-                { status: 500, headers: jsonHeaders },
-              );
-            }
             const text = (incoming.get("text") as string) || "";
             const sourceLang = (incoming.get("sourceLang") as string) || "";
             if (!text.trim()) {
@@ -117,56 +110,88 @@ export const Route = createFileRoute("/api/transcribe")({
                 { status: 400, headers: jsonHeaders },
               );
             }
-            const srcCode = NLLB_LANG_MAP[sourceLang];
-            if (!srcCode) {
-              return new Response(
-                JSON.stringify({
-                  error: `Translation not available for "${sourceLang}". NLLB-200 does not support this language.`,
-                }),
-                { status: 400, headers: jsonHeaders },
-              );
-            }
-            const hfRes = await fetch(
-              "https://router.huggingface.co/hf-inference/models/facebook/nllb-200-distilled-600M",
+
+            const langName = LANG_NAMES[sourceLang] || sourceLang || "the source language";
+            const system =
+              `You are a professional translator. Translate the user's text from ${langName} to English. ` +
+              `Output ONLY the English translation as plain text — no quotes, no preface, no explanation, no notes.`;
+            const chatBody = {
+              messages: [
+                { role: "system", content: system },
+                { role: "user", content: text },
+              ],
+              temperature: 0.2,
+              max_tokens: 1024,
+            };
+
+            type Attempt = { url: string; token: string | undefined; model: string; label: string };
+            const attempts: Attempt[] = [
               {
-                method: "POST",
-                headers: {
-                  Authorization: `Bearer ${hfToken}`,
-                  "Content-Type": "application/json",
-                },
-                body: JSON.stringify({
-                  inputs: text,
-                  parameters: { src_lang: srcCode, tgt_lang: "eng_Latn" },
-                  options: { wait_for_model: true },
-                }),
+                label: "hf-router",
+                url: "https://router.huggingface.co/v1/chat/completions",
+                token: process.env.HF_TOKEN,
+                model: "meta-llama/Llama-3.3-70B-Instruct",
               },
-            );
-            const raw = await hfRes.text();
-            if (!hfRes.ok) {
-              let msg = raw;
-              try {
-                const j = JSON.parse(raw);
-                msg = j.error || raw;
-              } catch {}
-              return new Response(
-                JSON.stringify({ error: `NLLB translation failed: ${msg}` }),
-                { status: hfRes.status, headers: jsonHeaders },
-              );
-            }
-            let translated = "";
-            try {
-              const j = JSON.parse(raw);
-              if (Array.isArray(j) && j[0]?.translation_text) {
-                translated = j[0].translation_text;
-              } else if (j.translation_text) {
-                translated = j.translation_text;
+              {
+                label: "hf-router-qwen",
+                url: "https://router.huggingface.co/v1/chat/completions",
+                token: process.env.HF_TOKEN,
+                model: "Qwen/Qwen2.5-72B-Instruct",
+              },
+              {
+                label: "groq",
+                url: "https://api.groq.com/openai/v1/chat/completions",
+                token: process.env.GROQ_API_KEY,
+                model: "llama-3.3-70b-versatile",
+              },
+            ];
+
+            const errors: string[] = [];
+            for (const a of attempts) {
+              if (!a.token) {
+                errors.push(`${a.label}: no token configured`);
+                continue;
               }
-            } catch {
-              translated = raw;
+              try {
+                const r = await fetch(a.url, {
+                  method: "POST",
+                  headers: {
+                    Authorization: `Bearer ${a.token}`,
+                    "Content-Type": "application/json",
+                  },
+                  body: JSON.stringify({ model: a.model, ...chatBody }),
+                });
+                const raw = await r.text();
+                if (!r.ok) {
+                  let msg = raw;
+                  try {
+                    const j = JSON.parse(raw);
+                    msg = j.error?.message || j.error || raw;
+                  } catch {}
+                  errors.push(`${a.label} ${r.status}: ${String(msg).slice(0, 200)}`);
+                  continue;
+                }
+                const j = JSON.parse(raw);
+                const translated = j.choices?.[0]?.message?.content?.trim?.() || "";
+                if (!translated) {
+                  errors.push(`${a.label}: empty response`);
+                  continue;
+                }
+                return new Response(
+                  JSON.stringify({ text: translated, provider: "nllb" }),
+                  { status: 200, headers: jsonHeaders },
+                );
+              } catch (e) {
+                errors.push(`${a.label}: ${(e as Error).message}`);
+              }
             }
+
+            console.error("Translation providers failed:", errors.join(" | "));
             return new Response(
-              JSON.stringify({ text: translated, provider: "nllb" }),
-              { status: 200, headers: jsonHeaders },
+              JSON.stringify({
+                error: "Translation providers unavailable — please try again shortly.",
+              }),
+              { status: 502, headers: jsonHeaders },
             );
           }
 
