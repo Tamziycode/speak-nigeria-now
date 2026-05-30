@@ -198,27 +198,26 @@ export const Route = createFileRoute("/api/transcribe")({
             );
           }
 
-          // ===== MMS via HuggingFace Inference =====
+          // ===== MMS via HuggingFace Inference (per-language endpoints) =====
           if (provider === "mms") {
-            const hfToken = process.env.HF_TOKEN;
+            const hfToken = process.env.HF_API_KEY || process.env.HF_TOKEN;
             if (!hfToken) {
               return new Response(
-                JSON.stringify({ error: "HF_TOKEN not configured" }),
+                JSON.stringify({ error: "HF_API_KEY not configured" }),
                 { status: 500, headers: jsonHeaders },
               );
             }
-            const targetLang = MMS_LANG_MAP[language] || language || "eng";
+            const mmsUrl = mmsEndpoints[language] || DEFAULT_MMS_ENDPOINT;
+            const targetLang = language || "eng";
             const buffer = await file.arrayBuffer();
             const bytes = new Uint8Array(buffer);
 
-            const mmsUrl =
-              "https://router.huggingface.co/hf-inference/models/facebook/mms-1b-all";
             const mmsHeaders = {
               Authorization: `Bearer ${hfToken}`,
               "Content-Type": "audio/wav",
-              "x-wait-for-model": "true",
-              "x-use-cache": "false",
+              "X-Wait-For-Model": "true",
             };
+
 
             // Parse WAV header to decide whether chunking is needed.
             const view = new DataView(buffer);
