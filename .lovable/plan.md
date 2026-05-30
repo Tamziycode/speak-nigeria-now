@@ -1,37 +1,27 @@
-# Chunk MMS audio to bypass HF 30s limit
+# Fix "Model not supported by provider hf-inference"
 
-Implementation per the spec. All work in `src/routes/api/transcribe.ts`; nothing else changes.
+## Root cause
 
-## 1. `sliceWavToChunks(buffer: ArrayBuffer): Uint8Array[]`
+`router.huggingface.co/hf-inference/models/facebook/nllb-200-distilled-600M` returns `Model not supported by provider hf-inference`. HF removed NLLB from the serverless `hf-inference` provider — it's a provider-side change, not a code bug. The same token works for MMS because MMS is still on that provider.
 
-- Read 44-byte RIFF/WAV header with `DataView`:
-  - `numChannels` @ offset 22 (uint16 LE)
-  - `sampleRate` @ offset 24 (uint32 LE)
-  - `byteRate` @ offset 28 (uint32 LE)
-  - `bitsPerSample` @ offset 34 (uint16 LE)
-- PCM payload = bytes from offset 44 to end.
-- Chunk size (bytes) = `byteRate * 25` (25s). Overlap = `byteRate * 0.5` (0.5s back-step). Align both down to a sample frame boundary (`numChannels * bitsPerSample / 8`) so we never split a sample.
-- Walk the payload with `step = chunkBytes - overlapBytes`, slicing `[i, i + chunkBytes)`.
-- For each slice, build a new 44-byte header (copy original, then patch):
-  - offset 4 — `ChunkSize` = `36 + dataLen` (uint32 LE)
-  - offset 40 — `Subchunk2Size` = `dataLen` (uint32 LE)
-- Concatenate header + slice into a `Uint8Array` and push.
+## Fix (single file: `src/routes/api/transcribe.ts`, NLLB branch only)
 
-## 2. Sequential dispatch in the MMS branch
+Try providers/models in order and use the first that returns 200. Stop at the first success; only error out if all fail.
 
-- Compute `durationSec = (totalBytes - 44) / byteRate`.
-- If `durationSec <= 25` → keep the existing single-request path untouched.
-- Else: `const chunks = sliceWavToChunks(buffer)`, then `for (const chunk of chunks) { ... await fetch(...) }`. No `Promise.all` — HF serverless rate-limits parallel ASR calls (429s).
-- Same endpoint, same headers (`Authorization`, `Content-Type: audio/wav`, `x-wait-for-model: true`) as today; body is the chunk bytes.
+1. **Primary — HF router auto-provider**: POST to `https://router.huggingface.co/v1/chat/completions` (OpenAI-compatible) using a translation-capable instruct model (`meta-llama/Llama-3.3-70B-Instruct` or `Qwen/Qwen2.5-72B-Instruct`) with a strict system prompt: "Translate the user text from {srcLang full name} to English. Output only the translation, no preface." Map our `ha/yo/ig/ff/kr/pcm` codes to human names for the prompt. Parse `choices[0].message.content`.
 
-## 3. Concatenation + fault tolerance
+2. **Fallback — Groq**: If `GROQ_API_KEY` is set, hit `https://api.groq.com/openai/v1/chat/completions` with `llama-3.3-70b-versatile` and the same prompt. Groq is already wired for Whisper so the key exists.
 
-- `let finalTranscript = ""`.
-- Per chunk: `try` → parse JSON, append `text.trim()` joined by a single space. `catch` → append `[untranscribed segment]` and continue (log the error server-side via `console.error`).
-- Return the same response shape as before: `{ text: finalTranscript.trim(), provider: "mms", language: targetLang }`. The frontend needs zero changes.
+3. **Last resort**: Return the existing 400 with a clearer message ("Translation providers unavailable — try again shortly") instead of leaking `hf-inference`.
+
+Keep request/response shape identical (`{ text, provider: "nllb" }` — leave the provider tag as `"nllb"` so the frontend needs no changes, or rename to `"llm"` if you prefer; frontend only reads `text`).
 
 ## Out of scope
 
-- Whisper branch (Groq comfortably handles long audio).
-- NLLB translation chunking (text input — fine as-is).
-- Client-side progress updates.
+- MMS chunking (already done last turn).
+- Whisper branch.
+- Frontend changes.
+
+## Why not just swap to another HF model
+
+Every NLLB variant on HF serverless is in the same deprecated bucket right now. An LLM-based translation via the HF router (or Groq) is the lowest-friction working path and uses tokens you already have.
