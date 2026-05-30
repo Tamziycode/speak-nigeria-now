@@ -31,6 +31,53 @@ const NLLB_LANG_MAP: Record<string, string> = {
   pcm: "eng_Latn", // Pidgin → treat as English (Whisper path handles it better)
 };
 
+// Split a 16-bit PCM RIFF/WAV buffer into ~25s chunks with 0.5s overlap.
+// Each chunk is a fully self-contained WAV (44-byte header + sliced PCM data).
+function sliceWavToChunks(buffer: ArrayBuffer): Uint8Array[] {
+  const src = new Uint8Array(buffer);
+  const view = new DataView(buffer);
+  const numChannels = view.getUint16(22, true);
+  const sampleRate = view.getUint32(24, true);
+  const byteRate = view.getUint32(28, true);
+  const bitsPerSample = view.getUint16(34, true);
+
+  if (!byteRate || !numChannels || !bitsPerSample) {
+    // Header looks broken — fall back to single chunk.
+    return [src];
+  }
+
+  const frameSize = (numChannels * bitsPerSample) / 8; // bytes per sample frame
+  const alignDown = (n: number) => Math.floor(n / frameSize) * frameSize;
+  const chunkBytes = alignDown(byteRate * 25);
+  const overlapBytes = alignDown(byteRate * 0.5);
+  const step = Math.max(frameSize, chunkBytes - overlapBytes);
+
+  const pcm = src.subarray(44);
+  const out: Uint8Array[] = [];
+
+  for (let i = 0; i < pcm.length; i += step) {
+    const slice = pcm.subarray(i, Math.min(i + chunkBytes, pcm.length));
+    if (slice.length < frameSize) break;
+
+    const wav = new Uint8Array(44 + slice.length);
+    wav.set(src.subarray(0, 44), 0); // copy original header
+    wav.set(slice, 44);
+
+    const dv = new DataView(wav.buffer);
+    dv.setUint32(4, 36 + slice.length, true); // ChunkSize
+    dv.setUint32(40, slice.length, true); // Subchunk2Size
+    // sampleRate/byteRate untouched — same encoding as source.
+    void sampleRate;
+
+    out.push(wav);
+    if (i + chunkBytes >= pcm.length) break;
+  }
+
+  return out.length ? out : [src];
+}
+
+
+
 export const Route = createFileRoute("/api/transcribe")({
   server: {
     handlers: {
