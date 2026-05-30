@@ -449,8 +449,7 @@ function Index() {
                     </p>
                   ) : (
                     <p className="min-h-[80px] text-sm italic text-muted-foreground">
-                      Click "Translate to English" to send the recording through
-                      Whisper's translation endpoint.
+                      Click "Translate to English" to convert the transcript above into English.
                     </p>
                   )}
                 </div>
