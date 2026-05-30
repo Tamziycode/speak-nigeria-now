@@ -28,18 +28,23 @@ export const Route = createFileRoute("/")({
   }),
 });
 
-// `supported: true` = native Groq Whisper language code.
-// Unsupported languages are still selectable (for logging/UX) but we omit the
-// `language` field on the API call and let Whisper auto-detect.
-const LANGUAGES: { label: string; code: string; supported: boolean }[] = [
-  { label: "Nigerian Pidgin", code: "pcm", supported: false },
-  { label: "Hausa", code: "ha", supported: true },
-  { label: "Yoruba", code: "yo", supported: true },
-  { label: "Igbo", code: "ig", supported: false },
-  { label: "Fulfulde", code: "ff", supported: false },
-  { label: "Kanuri", code: "kr", supported: false },
-  { label: "Ibibio", code: "ibb", supported: false },
-  { label: "Tiv", code: "tiv", supported: false },
+// provider routes the request: Whisper for Hausa/Yoruba/Pidgin,
+// Meta MMS (via HuggingFace) for the rest.
+type Provider = "whisper" | "mms";
+const LANGUAGES: {
+  label: string;
+  code: string;
+  provider: Provider;
+  translatable?: boolean; // Whisper /translations supports → English
+}[] = [
+  { label: "Nigerian Pidgin", code: "pcm", provider: "whisper" },
+  { label: "Hausa", code: "ha", provider: "whisper", translatable: true },
+  { label: "Yoruba", code: "yo", provider: "whisper", translatable: true },
+  { label: "Igbo", code: "ig", provider: "mms" },
+  { label: "Fulfulde", code: "ff", provider: "mms" },
+  { label: "Kanuri", code: "kr", provider: "mms" },
+  { label: "Ibibio", code: "ibb", provider: "mms" },
+  { label: "Tiv", code: "tiv", provider: "mms" },
 ];
 
 
