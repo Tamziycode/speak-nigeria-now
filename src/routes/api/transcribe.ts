@@ -8,17 +8,20 @@ const corsHeaders = {
 
 const jsonHeaders = { "Content-Type": "application/json", ...corsHeaders };
 
-// ISO 639-3 codes for MMS adapters
-const MMS_LANG_MAP: Record<string, string> = {
-  ha: "hau", // Hausa
-  yo: "yor", // Yoruba
-  ig: "ibo",
-  ff: "fuv", // Nigerian Fulfulde
-  kr: "knc", // Central Kanuri
-  ibb: "ibb",
-  tiv: "tiv",
-  pcm: "pcm",
+// Per-language fine-tuned MMS endpoints (avoid mms-1b-all hallucination loops).
+const mmsEndpoints: Record<string, string> = {
+  yo: "https://api-inference.huggingface.co/models/facebook/mms-1b-yor",
+  ig: "https://api-inference.huggingface.co/models/facebook/mms-1b-ibo",
+  ha: "https://api-inference.huggingface.co/models/facebook/mms-1b-hau",
+  ff: "https://api-inference.huggingface.co/models/facebook/mms-1b-fuv",
+  kr: "https://api-inference.huggingface.co/models/facebook/mms-1b-knc",
+  ibb: "https://api-inference.huggingface.co/models/facebook/mms-1b-ibb",
+  tiv: "https://api-inference.huggingface.co/models/facebook/mms-1b-tiv",
+  pcm: "https://api-inference.huggingface.co/models/facebook/mms-1b-eng", // Pidgin fallback
 };
+const DEFAULT_MMS_ENDPOINT =
+  "https://api-inference.huggingface.co/models/facebook/mms-1b-eng";
+
 
 // Human-readable names used in the LLM translation prompt.
 const LANG_NAMES: Record<string, string> = {
@@ -195,27 +198,26 @@ export const Route = createFileRoute("/api/transcribe")({
             );
           }
 
-          // ===== MMS via HuggingFace Inference =====
+          // ===== MMS via HuggingFace Inference (per-language endpoints) =====
           if (provider === "mms") {
-            const hfToken = process.env.HF_TOKEN;
+            const hfToken = process.env.HF_API_KEY || process.env.HF_TOKEN;
             if (!hfToken) {
               return new Response(
-                JSON.stringify({ error: "HF_TOKEN not configured" }),
+                JSON.stringify({ error: "HF_API_KEY not configured" }),
                 { status: 500, headers: jsonHeaders },
               );
             }
-            const targetLang = MMS_LANG_MAP[language] || language || "eng";
+            const mmsUrl = mmsEndpoints[language] || DEFAULT_MMS_ENDPOINT;
+            const targetLang = language || "eng";
             const buffer = await file.arrayBuffer();
             const bytes = new Uint8Array(buffer);
 
-            const mmsUrl =
-              "https://router.huggingface.co/hf-inference/models/facebook/mms-1b-all";
             const mmsHeaders = {
               Authorization: `Bearer ${hfToken}`,
               "Content-Type": "audio/wav",
-              "x-wait-for-model": "true",
-              "x-use-cache": "false",
+              "X-Wait-For-Model": "true",
             };
+
 
             // Parse WAV header to decide whether chunking is needed.
             const view = new DataView(buffer);
