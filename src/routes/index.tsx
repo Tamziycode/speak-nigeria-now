@@ -38,8 +38,8 @@ const LANGUAGES: {
   translatable?: boolean; // Whisper /translations supports → English
 }[] = [
   { label: "Nigerian Pidgin", code: "pcm", provider: "whisper" },
-  { label: "Hausa", code: "ha", provider: "whisper", translatable: true },
-  { label: "Yoruba", code: "yo", provider: "whisper", translatable: true },
+  { label: "Hausa", code: "ha", provider: "mms" },
+  { label: "Yoruba", code: "yo", provider: "mms" },
   { label: "Igbo", code: "ig", provider: "mms" },
   { label: "Fulfulde", code: "ff", provider: "mms" },
   { label: "Kanuri", code: "kr", provider: "mms" },
