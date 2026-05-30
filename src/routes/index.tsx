@@ -222,6 +222,35 @@ function Index() {
     setWer(computeWER(groundTruth, transcript.text));
   };
 
+  const handleTranslate = async () => {
+    const wav = lastWavRef.current;
+    if (!wav) return;
+    setTranslating(true);
+    setTranslationError(null);
+    try {
+      const form = new FormData();
+      form.append("file", new File([wav], "audio.wav", { type: "audio/wav" }));
+      form.append("provider", "whisper");
+      form.append("mode", "translate");
+      const res = await fetch("/api/transcribe", { method: "POST", body: form });
+      const json = await res.json().catch(() => ({ error: "Invalid response" }));
+      if (!res.ok) {
+        const errField = (json as { error?: unknown }).error;
+        const msg = typeof errField === "string" ? errField : `Translation failed (${res.status})`;
+        setTranslationError(msg);
+        return;
+      }
+      const text = typeof (json as { text?: unknown }).text === "string"
+        ? (json as { text: string }).text.trim()
+        : "";
+      setTranslation(text);
+    } catch (e) {
+      setTranslationError((e as Error).message || "Translation failed");
+    } finally {
+      setTranslating(false);
+    }
+  };
+
 
   const formatTime = (s: number) => {
     const m = Math.floor(s / 60).toString().padStart(2, "0");
