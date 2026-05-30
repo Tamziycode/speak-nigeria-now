@@ -20,15 +20,16 @@ const MMS_LANG_MAP: Record<string, string> = {
   pcm: "pcm",
 };
 
-// NLLB-200 source language codes (BCP-47 style: lang_Script)
-// Tiv and Ibibio are NOT in NLLB-200 → surface a clear error.
-const NLLB_LANG_MAP: Record<string, string> = {
-  ha: "hau_Latn",
-  yo: "yor_Latn",
-  ig: "ibo_Latn",
-  ff: "fuv_Latn", // Nigerian Fulfulde
-  kr: "knc_Latn", // Central Kanuri
-  pcm: "eng_Latn", // Pidgin → treat as English (Whisper path handles it better)
+// Human-readable names used in the LLM translation prompt.
+const LANG_NAMES: Record<string, string> = {
+  ha: "Hausa",
+  yo: "Yoruba",
+  ig: "Igbo",
+  ff: "Nigerian Fulfulde",
+  kr: "Kanuri",
+  pcm: "Nigerian Pidgin English",
+  ibb: "Ibibio",
+  tiv: "Tiv",
 };
 
 // Split a 16-bit PCM RIFF/WAV buffer into ~25s chunks with 0.5s overlap.
