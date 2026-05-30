@@ -132,47 +132,83 @@ export const Route = createFileRoute("/api/transcribe")({
               );
             }
             const targetLang = MMS_LANG_MAP[language] || language || "eng";
-            const bytes = new Uint8Array(await file.arrayBuffer());
+            const buffer = await file.arrayBuffer();
+            const bytes = new Uint8Array(buffer);
 
-            const hfRes = await fetch(
-              "https://router.huggingface.co/hf-inference/models/facebook/mms-1b-all",
-              {
-                method: "POST",
-                headers: {
-                  Authorization: `Bearer ${hfToken}`,
-                  "Content-Type": "audio/wav",
-                  "x-wait-for-model": "true",
-                  "x-use-cache": "false",
-                },
-                body: bytes,
-              },
-            );
+            const mmsUrl =
+              "https://router.huggingface.co/hf-inference/models/facebook/mms-1b-all";
+            const mmsHeaders = {
+              Authorization: `Bearer ${hfToken}`,
+              "Content-Type": "audio/wav",
+              "x-wait-for-model": "true",
+              "x-use-cache": "false",
+            };
 
-            const raw = await hfRes.text();
-            if (!hfRes.ok) {
-              let msg = raw;
+            // Parse WAV header to decide whether chunking is needed.
+            const view = new DataView(buffer);
+            const byteRate = view.getUint32(28, true);
+            const durationSec = byteRate > 0 ? (bytes.length - 44) / byteRate : 0;
+
+            const callMms = async (body: Uint8Array) => {
+              const r = await fetch(mmsUrl, { method: "POST", headers: mmsHeaders, body });
+              const txt = await r.text();
+              if (!r.ok) {
+                let msg = txt;
+                try {
+                  const j = JSON.parse(txt);
+                  msg = j.error || txt;
+                } catch {}
+                throw new Error(`HF ${r.status}: ${msg}`);
+              }
               try {
-                const j = JSON.parse(raw);
-                msg = j.error || raw;
-              } catch {}
-              return new Response(
-                JSON.stringify({
-                  error: `MMS (${targetLang}) unavailable: ${msg}`,
-                }),
-                { status: hfRes.status, headers: jsonHeaders },
-              );
+                const j = JSON.parse(txt);
+                return typeof j.text === "string" ? j.text : "";
+              } catch {
+                return txt;
+              }
+            };
+
+            // ≤25s: single request, original behaviour.
+            if (durationSec <= 25) {
+              try {
+                const text = await callMms(bytes);
+                return new Response(
+                  JSON.stringify({ text, provider: "mms", language: targetLang }),
+                  { status: 200, headers: jsonHeaders },
+                );
+              } catch (e) {
+                return new Response(
+                  JSON.stringify({
+                    error: `MMS (${targetLang}) unavailable: ${(e as Error).message}`,
+                  }),
+                  { status: 502, headers: jsonHeaders },
+                );
+              }
             }
-            let parsed: { text?: string } = {};
-            try {
-              parsed = JSON.parse(raw);
-            } catch {
-              parsed = { text: raw };
+
+            // >25s: slice into 25s chunks with 0.5s overlap, dispatch sequentially.
+            const chunks = sliceWavToChunks(buffer);
+            let finalTranscript = "";
+            for (const chunk of chunks) {
+              try {
+                const piece = (await callMms(chunk)).trim();
+                if (piece) finalTranscript += (finalTranscript ? " " : "") + piece;
+              } catch (e) {
+                console.error("MMS chunk failed:", (e as Error).message);
+                finalTranscript +=
+                  (finalTranscript ? " " : "") + "[untranscribed segment]";
+              }
             }
             return new Response(
-              JSON.stringify({ text: parsed.text || "", provider: "mms", language: targetLang }),
+              JSON.stringify({
+                text: finalTranscript.trim(),
+                provider: "mms",
+                language: targetLang,
+              }),
               { status: 200, headers: jsonHeaders },
             );
           }
+
 
           // ===== Whisper (Groq) =====
           const apiKey = process.env.GROQ_API_KEY;
