@@ -1,18 +1,16 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Mic,
   Square,
   Loader2,
   Copy,
   Check,
-  AlertCircle,
+  Download,
+  Upload,
   X,
-  CircleDot,
 } from "lucide-react";
 import { blobTo16kWav } from "@/lib/recorder";
-import { computeWER, type WERResult } from "@/lib/wer";
-
 
 export const Route = createFileRoute("/")({
   component: Index,
@@ -22,64 +20,92 @@ export const Route = createFileRoute("/")({
       {
         name: "description",
         content:
-          "Real-time speech-to-text prototype for indigenous Nigerian languages.",
+          "Speech-to-text for Yoruba, Hausa, and Nigerian Pidgin powered by Whisper-large-v3.",
       },
     ],
   }),
 });
 
-// provider routes the request: Whisper for Hausa/Yoruba/Pidgin,
-// Meta MMS (via HuggingFace) for the rest.
-type Provider = "whisper" | "mms";
-const LANGUAGES: {
-  label: string;
-  code: string;
-  provider: Provider;
-  translatable?: boolean; // Whisper /translations supports → English
-}[] = [
-  { label: "Nigerian Pidgin", code: "pcm", provider: "whisper" },
-  { label: "Hausa", code: "ha", provider: "mms" },
-  { label: "Yoruba", code: "yo", provider: "mms" },
-  { label: "Igbo", code: "ig", provider: "mms" },
-  { label: "Fulfulde", code: "ff", provider: "mms" },
-  { label: "Kanuri", code: "kr", provider: "mms" },
-  { label: "Ibibio", code: "ibb", provider: "mms" },
-  { label: "Tiv", code: "tiv", provider: "mms" },
-];
+const LANGUAGES = [
+  { label: "Hausa", code: "ha" },
+  { label: "Yoruba", code: "yo" },
+  { label: "Nigerian Pidgin", code: "pcm" },
+] as const;
 
+const STORAGE_KEY = "stt:last-session";
+const MAX_BYTES = 25 * 1024 * 1024;
+const ACCEPTED_TYPES = [
+  "audio/wav",
+  "audio/x-wav",
+  "audio/wave",
+  "audio/mpeg",
+  "audio/mp3",
+  "audio/mp4",
+  "audio/x-m4a",
+  "audio/m4a",
+];
+const ACCEPTED_EXTS = [".wav", ".mp3", ".m4a"];
 
 type RecState = "idle" | "recording" | "processing";
 
 function Index() {
-  const [language, setLanguage] = useState("pcm");
+  const [language, setLanguage] = useState<string>("ha");
   const [state, setState] = useState<RecState>("idle");
   const [elapsed, setElapsed] = useState(0);
-  const [transcript, setTranscript] = useState<{ text: string; raw: unknown } | null>(null);
-  const [groundTruth, setGroundTruth] = useState("");
-  const [wer, setWer] = useState<WERResult | null>(null);
-  const [translation, setTranslation] = useState<string | null>(null);
-  const [translating, setTranslating] = useState(false);
-  const [translationError, setTranslationError] = useState<string | null>(null);
-  const lastWavRef = useRef<Blob | null>(null);
-
+  const [transcript, setTranscript] = useState("");
+  const [audioUrl, setAudioUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [warning, setWarning] = useState<string | null>(null);
-  const [permissionDenied, setPermissionDenied] = useState(false);
   const [copied, setCopied] = useState(false);
   const [apiOnline, setApiOnline] = useState(true);
+  const [dragOver, setDragOver] = useState(false);
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
   const streamRef = useRef<MediaStream | null>(null);
   const startTimeRef = useRef<number>(0);
   const timerRef = useRef<number | null>(null);
-  const slowWarnRef = useRef<number | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
+  // API health
   useEffect(() => {
     fetch("/api/transcribe", { method: "OPTIONS" })
       .then((r) => setApiOnline(r.ok))
       .catch(() => setApiOnline(false));
   }, []);
+
+  // Restore last session
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (!raw) return;
+      const saved = JSON.parse(raw) as { transcript?: string; language?: string };
+      if (saved.transcript) setTranscript(saved.transcript);
+      if (saved.language && LANGUAGES.some((l) => l.code === saved.language)) {
+        setLanguage(saved.language);
+      }
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
+  // Persist transcript + language
+  useEffect(() => {
+    try {
+      localStorage.setItem(
+        STORAGE_KEY,
+        JSON.stringify({ transcript, language }),
+      );
+    } catch {
+      /* ignore */
+    }
+  }, [transcript, language]);
+
+  // Revoke object URL on change/unmount
+  useEffect(() => {
+    return () => {
+      if (audioUrl) URL.revokeObjectURL(audioUrl);
+    };
+  }, [audioUrl]);
 
   const clearTimer = () => {
     if (timerRef.current) {
@@ -88,16 +114,58 @@ function Index() {
     }
   };
 
+  const setNewAudio = (blob: Blob) => {
+    setAudioUrl((prev) => {
+      if (prev) URL.revokeObjectURL(prev);
+      return URL.createObjectURL(blob);
+    });
+  };
+
+  const sendForTranscription = useCallback(
+    async (file: File) => {
+      setState("processing");
+      setError(null);
+      try {
+        const form = new FormData();
+        form.append("file", file);
+        form.append("language", language);
+
+        const res = await fetch("/api/transcribe", {
+          method: "POST",
+          body: form,
+        });
+
+        const json = await res
+          .json()
+          .catch(() => ({ error: "Invalid response from server" }));
+
+        if (!res.ok) {
+          const errField = (json as { error?: unknown }).error;
+          const msg =
+            typeof errField === "string"
+              ? errField
+              : `Request failed (${res.status})`;
+          setError(msg);
+          setState("idle");
+          return;
+        }
+
+        const text =
+          typeof (json as { text?: unknown }).text === "string"
+            ? (json as { text: string }).text.trim()
+            : "";
+        setTranscript(text);
+        setState("idle");
+      } catch (e) {
+        setError((e as Error).message || "Network error. Please try again.");
+        setState("idle");
+      }
+    },
+    [language],
+  );
+
   const startRecording = useCallback(async () => {
     setError(null);
-    setWarning(null);
-    setTranscript(null);
-    setWer(null);
-    setTranslation(null);
-    setTranslationError(null);
-
-    setPermissionDenied(false);
-
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: {
@@ -119,7 +187,25 @@ function Index() {
       rec.ondataavailable = (e) => {
         if (e.data.size > 0) chunksRef.current.push(e.data);
       };
-      rec.onstop = handleStop;
+      rec.onstop = async () => {
+        const duration = (Date.now() - startTimeRef.current) / 1000;
+        if (duration < 1) {
+          setState("idle");
+          setError("Please record a longer audio segment.");
+          return;
+        }
+        try {
+          const raw = new Blob(chunksRef.current, { type: "audio/webm" });
+          const wav = await blobTo16kWav(raw);
+          setNewAudio(wav);
+          await sendForTranscription(
+            new File([wav], "recording.wav", { type: "audio/wav" }),
+          );
+        } catch (e) {
+          setError((e as Error).message || "Failed to process audio.");
+          setState("idle");
+        }
+      };
 
       rec.start();
       startTimeRef.current = Date.now();
@@ -128,12 +214,12 @@ function Index() {
       timerRef.current = window.setInterval(() => {
         setElapsed((Date.now() - startTimeRef.current) / 1000);
       }, 100);
-    } catch (e) {
-      console.error(e);
-      setPermissionDenied(true);
+    } catch {
+      setError(
+        "Microphone access denied. Please allow microphone access and try again.",
+      );
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [sendForTranscription]);
 
   const stopRecording = useCallback(() => {
     const rec = mediaRecorderRef.current;
@@ -142,145 +228,85 @@ function Index() {
     streamRef.current?.getTracks().forEach((t) => t.stop());
   }, []);
 
-  const handleStop = async () => {
-    const duration = (Date.now() - startTimeRef.current) / 1000;
-    setState("processing");
-
-    if (duration < 1) {
-      setState("idle");
-      setError("Please record a longer audio segment.");
-      return;
+  const validateFile = (file: File): string | null => {
+    const name = file.name.toLowerCase();
+    const extOk = ACCEPTED_EXTS.some((e) => name.endsWith(e));
+    const typeOk = ACCEPTED_TYPES.includes(file.type);
+    if (!extOk && !typeOk) {
+      return "Unsupported file type. Please upload a .wav, .mp3, or .m4a file.";
     }
+    if (file.size > MAX_BYTES) {
+      return "File exceeds the 25 MB size limit.";
+    }
+    return null;
+  };
 
-    try {
-      const raw = new Blob(chunksRef.current, { type: "audio/webm" });
-      const wav = await blobTo16kWav(raw);
-
-      lastWavRef.current = wav;
-      const lang = LANGUAGES.find((l) => l.code === language);
-      const provider: Provider = lang?.provider ?? "whisper";
-
-      const form = new FormData();
-      form.append("file", new File([wav], "audio.wav", { type: "audio/wav" }));
-      form.append("provider", provider);
-      // Pidgin has no Whisper code — let Whisper auto-detect.
-      if (lang && lang.code !== "pcm") form.append("language", lang.code);
-
-      const controller = new AbortController();
-      slowWarnRef.current = window.setTimeout(() => {
-        setWarning("Network degraded: Transcription delayed");
-      }, 15000);
-
-      const res = await fetch("/api/transcribe", {
-        method: "POST",
-        body: form,
-        signal: controller.signal,
-      });
-
-      if (slowWarnRef.current) {
-        window.clearTimeout(slowWarnRef.current);
-        slowWarnRef.current = null;
-      }
-
-      const json = await res.json().catch(() => ({ error: "Invalid response" }));
-      if (!res.ok) {
-        const errField = (json as { error?: unknown }).error;
-        const msg =
-          typeof errField === "string"
-            ? errField
-            : errField && typeof errField === "object" && "message" in errField
-              ? String((errField as { message: unknown }).message)
-              : `Request failed (${res.status})`;
-        setError(msg);
-        setState("idle");
+  const handleFile = useCallback(
+    async (file: File) => {
+      setError(null);
+      const validation = validateFile(file);
+      if (validation) {
+        setError(validation);
         return;
       }
+      setNewAudio(file);
+      await sendForTranscription(file);
+    },
+    [sendForTranscription],
+  );
 
-      const text =
-        typeof (json as { text?: unknown }).text === "string"
-          ? ((json as { text: string }).text.trim())
-          : "";
-      setTranscript({ text, raw: json });
-      setWer(null);
-      setState("idle");
-    } catch (e) {
-      console.error(e);
-      setError((e as Error).message || "Transcription failed");
-      setState("idle");
-    }
+  const onFileInput = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const f = e.target.files?.[0];
+    if (f) handleFile(f);
+    e.target.value = "";
+  };
+
+  const onDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    setDragOver(false);
+    const f = e.dataTransfer.files?.[0];
+    if (f) handleFile(f);
   };
 
   const handleCopy = async () => {
     if (!transcript) return;
-    await navigator.clipboard.writeText(transcript.text);
+    await navigator.clipboard.writeText(transcript);
     setCopied(true);
     setTimeout(() => setCopied(false), 1500);
   };
 
-  const handleCalculateWER = () => {
-    if (!transcript?.text || !groundTruth.trim()) return;
-    setWer(computeWER(groundTruth, transcript.text));
+  const handleDownload = () => {
+    if (!transcript) return;
+    const blob = new Blob([transcript], { type: "text/plain;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `transcript-${language}-${Date.now()}.txt`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
   };
 
-  const handleTranslate = async () => {
-    if (!transcript?.text) return;
-    const lang = LANGUAGES.find((l) => l.code === language);
-    setTranslating(true);
-    setTranslationError(null);
-    try {
-      const form = new FormData();
-      let res: Response;
-      if (lang?.provider === "mms") {
-        // Text-based translation via NLLB-200
-        form.append("provider", "nllb");
-        form.append("text", transcript.text);
-        form.append("sourceLang", language);
-        // dummy file to satisfy multipart parsing on the server
-        form.append("file", new File([new Uint8Array()], "empty.bin"));
-        res = await fetch("/api/transcribe", { method: "POST", body: form });
-      } else {
-        // Whisper audio translation (Hausa, Yoruba, Pidgin)
-        const wav = lastWavRef.current;
-        if (!wav) {
-          setTranslationError("No audio available. Please record again.");
-          setTranslating(false);
-          return;
-        }
-        form.append("file", new File([wav], "audio.wav", { type: "audio/wav" }));
-        form.append("provider", "whisper");
-        form.append("mode", "translate");
-        res = await fetch("/api/transcribe", { method: "POST", body: form });
-      }
-      const json = await res.json().catch(() => ({ error: "Invalid response" }));
-      if (!res.ok) {
-        const errField = (json as { error?: unknown }).error;
-        const msg = typeof errField === "string" ? errField : `Translation failed (${res.status})`;
-        setTranslationError(msg);
-        return;
-      }
-      const text = typeof (json as { text?: unknown }).text === "string"
-        ? (json as { text: string }).text.trim()
-        : "";
-      setTranslation(text);
-    } catch (e) {
-      setTranslationError((e as Error).message || "Translation failed");
-    } finally {
-      setTranslating(false);
-    }
-  };
-
+  const { wordCount, charCount } = useMemo(() => {
+    const trimmed = transcript.trim();
+    return {
+      wordCount: trimmed ? trimmed.split(/\s+/).length : 0,
+      charCount: transcript.length,
+    };
+  }, [transcript]);
 
   const formatTime = (s: number) => {
     const m = Math.floor(s / 60).toString().padStart(2, "0");
     const sec = Math.floor(s % 60).toString().padStart(2, "0");
-    const ms = Math.floor((s % 1) * 10);
-    return `${m}:${sec}.${ms}`;
+    return `${m}:${sec}`;
   };
+
+  const busy = state !== "idle";
 
   return (
     <div className="min-h-screen bg-background text-foreground">
-      {/* Header */}
-      <header className="border-b border-border bg-background">
+      <header className="border-b border-border bg-card">
         <div className="mx-auto flex max-w-5xl items-center justify-between px-6 py-4">
           <h1 className="text-base font-semibold tracking-tight">
             Multilingual STT Prototype
@@ -299,28 +325,26 @@ function Index() {
         </div>
       </header>
 
-      <main className="mx-auto max-w-3xl px-6 py-12">
-        {/* Banners */}
-        {permissionDenied && (
-          <Banner
-            tone="error"
-            onClose={() => setPermissionDenied(false)}
-            message="Microphone access denied. Please allow microphone access in your browser settings and try again."
-          />
-        )}
+      <main className="mx-auto max-w-3xl px-6 py-10">
         {error && (
-          <Banner tone="error" onClose={() => setError(null)} message={error} />
-        )}
-        {warning && (
-          <Banner
-            tone="warning"
-            onClose={() => setWarning(null)}
-            message={warning}
-          />
+          <div
+            role="alert"
+            className="mb-6 flex items-start justify-between gap-3 rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800"
+          >
+            <span>{error}</span>
+            <button
+              type="button"
+              aria-label="Dismiss error"
+              onClick={() => setError(null)}
+              className="text-red-700 hover:text-red-900"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
         )}
 
-        {/* Dashboard */}
         <section className="flex flex-col items-center gap-8">
+          {/* Language selector */}
           <div className="w-full max-w-sm">
             <label
               htmlFor="language"
@@ -331,9 +355,9 @@ function Index() {
             <select
               id="language"
               value={language}
-              disabled={state !== "idle"}
+              disabled={busy}
               onChange={(e) => setLanguage(e.target.value)}
-              className="h-11 w-full rounded-md border border-border bg-card px-3 text-sm font-medium text-foreground shadow-sm transition focus:border-foreground focus:outline-none focus:ring-1 focus:ring-foreground disabled:opacity-50"
+              className="h-11 w-full rounded-md border border-border bg-card px-3 text-sm font-medium text-foreground shadow-sm transition focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary disabled:opacity-50"
             >
               {LANGUAGES.map((l) => (
                 <option key={l.code} value={l.code}>
@@ -341,335 +365,149 @@ function Index() {
                 </option>
               ))}
             </select>
-            <p className="mt-2 text-xs leading-relaxed text-muted-foreground">
-              {(() => {
-                const l = LANGUAGES.find((x) => x.code === language);
-                if (!l) return null;
-                return l.provider === "whisper"
-                  ? "Engine: Whisper-large-v3 (Groq)"
-                  : "Engine: Meta MMS (HuggingFace)";
-              })()}
-            </p>
           </div>
 
-          {/* Record button */}
+          {/* Controls */}
           <div className="flex flex-col items-center gap-4">
-            <RecordButton
-              state={state}
-              elapsed={elapsed}
-              onStart={startRecording}
-              onStop={stopRecording}
-            />
-            <p className="text-xs text-muted-foreground">
-              {state === "idle" && "Press to capture audio · 16kHz mono WAV"}
-              {state === "recording" && (
-                <span className="font-mono tabular-nums">
-                  {formatTime(elapsed)}
-                </span>
+            <div className="flex flex-wrap items-center justify-center gap-3">
+              {state === "recording" ? (
+                <button
+                  type="button"
+                  onClick={stopRecording}
+                  className="inline-flex h-11 items-center gap-2 rounded-md bg-red-600 px-6 text-sm font-semibold text-white shadow-sm transition hover:bg-red-700"
+                >
+                  <Square className="h-4 w-4 fill-current" />
+                  Stop Recording
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={startRecording}
+                  disabled={busy}
+                  className="inline-flex h-11 items-center gap-2 rounded-md bg-primary px-6 text-sm font-semibold text-primary-foreground shadow-sm transition hover:opacity-90 disabled:opacity-50"
+                >
+                  {state === "processing" ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <Mic className="h-4 w-4" />
+                  )}
+                  {state === "processing" ? "Transcribing…" : "Start Recording"}
+                </button>
               )}
-              {state === "processing" && "Forwarding to inference engine…"}
-            </p>
+
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={busy}
+                className="inline-flex h-11 items-center gap-2 rounded-md border border-primary bg-card px-5 text-sm font-semibold text-primary shadow-sm transition hover:bg-accent disabled:opacity-50"
+              >
+                <Upload className="h-4 w-4" />
+                Upload Audio File
+              </button>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept=".wav,.mp3,.m4a,audio/wav,audio/mpeg,audio/mp4,audio/x-m4a"
+                className="hidden"
+                onChange={onFileInput}
+              />
+            </div>
+
+            {state === "recording" && (
+              <div className="flex items-center gap-2 text-xs font-mono tabular-nums text-red-700">
+                <span className="inline-block h-2 w-2 animate-pulse rounded-full bg-red-600" />
+                {formatTime(elapsed)}
+              </div>
+            )}
+            {state === "idle" && (
+              <p className="text-xs text-muted-foreground">
+                Record live or drop an audio file below · .wav, .mp3, .m4a · max 25 MB
+              </p>
+            )}
           </div>
 
-          {/* Transcript card */}
+          {/* Drop zone */}
+          {state === "idle" && (
+            <div
+              onDragOver={(e) => {
+                e.preventDefault();
+                setDragOver(true);
+              }}
+              onDragLeave={() => setDragOver(false)}
+              onDrop={onDrop}
+              className={`w-full rounded-lg border-2 border-dashed px-6 py-6 text-center text-sm transition ${
+                dragOver
+                  ? "border-primary bg-accent"
+                  : "border-border bg-card text-muted-foreground"
+              }`}
+            >
+              Drag and drop an audio file here, or use the upload button above.
+            </div>
+          )}
+
+          {/* Audio playback */}
+          {audioUrl && (
+            <div className="w-full">
+              <h2 className="mb-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                Audio Preview
+              </h2>
+              <audio src={audioUrl} controls className="w-full" />
+            </div>
+          )}
+
+          {/* Transcript */}
           <div className="w-full">
-            <div className="rounded-lg border border-border bg-[oklch(0.985_0_0)] p-5 shadow-sm">
-              <div className="mb-3 flex items-center justify-between">
+            <div className="rounded-lg border border-border bg-card p-5 shadow-sm">
+              <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
                 <h2 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                   Transcription Output
                 </h2>
-                <button
-                  type="button"
-                  onClick={handleCopy}
-                  disabled={!transcript}
-                  className="inline-flex items-center gap-1.5 rounded-md border border-border bg-card px-2.5 py-1 text-xs font-medium text-foreground transition hover:bg-accent disabled:opacity-40"
-                >
-                  {copied ? (
-                    <>
-                      <Check className="h-3.5 w-3.5" /> Copied
-                    </>
-                  ) : (
-                    <>
-                      <Copy className="h-3.5 w-3.5" /> Copy
-                    </>
-                  )}
-                </button>
-              </div>
-              {transcript?.text ? (
-                <p className="min-h-[140px] whitespace-pre-wrap break-words text-base leading-relaxed text-foreground">
-                  {transcript.text}
-                </p>
-              ) : (
-                <p className="min-h-[140px] text-sm italic text-muted-foreground">
-                  {state === "processing"
-                    ? "Transcribing…"
-                    : transcript
-                      ? "(empty transcript)"
-                      : "Awaiting transcription"}
-                </p>
-              )}
-            </div>
-          </div>
-
-          {/* English Translation — all languages */}
-          {transcript?.text && (
-            
-              <div className="w-full">
-                <div className="rounded-lg border border-border bg-card p-5 shadow-sm">
-                  <div className="mb-3 flex items-center justify-between">
-                    <h2 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                      English Translation
-                    </h2>
-                    <button
-                      type="button"
-                      onClick={handleTranslate}
-                      disabled={translating}
-                      style={{ background: "var(--gradient-primary)" }}
-                      className="inline-flex h-8 items-center gap-1.5 rounded-md px-3 text-xs font-semibold text-primary-foreground shadow-sm transition hover:opacity-90 disabled:opacity-40"
-                    >
-                      {translating ? (
-                        <>
-                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                          Translating…
-                        </>
-                      ) : translation ? (
-                        "Re-translate"
-                      ) : (
-                        "Translate to English"
-                      )}
-                    </button>
-                  </div>
-                  {translationError ? (
-                    <p className="min-h-[80px] text-sm text-red-700">
-                      {translationError}
-                    </p>
-                  ) : translation ? (
-                    <p className="min-h-[80px] whitespace-pre-wrap break-words text-base leading-relaxed text-foreground">
-                      {translation}
-                    </p>
-                  ) : (
-                    <p className="min-h-[80px] text-sm italic text-muted-foreground">
-                      Click "Translate to English" to convert the transcript above into English.
-                    </p>
-                  )}
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={handleCopy}
+                    disabled={!transcript}
+                    className="inline-flex items-center gap-1.5 rounded-md border border-border bg-card px-2.5 py-1 text-xs font-medium text-foreground transition hover:bg-accent disabled:opacity-40"
+                  >
+                    {copied ? (
+                      <>
+                        <Check className="h-3.5 w-3.5" /> Copied
+                      </>
+                    ) : (
+                      <>
+                        <Copy className="h-3.5 w-3.5" /> Copy
+                      </>
+                    )}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleDownload}
+                    disabled={!transcript}
+                    className="inline-flex items-center gap-1.5 rounded-md border border-border bg-card px-2.5 py-1 text-xs font-medium text-foreground transition hover:bg-accent disabled:opacity-40"
+                  >
+                    <Download className="h-3.5 w-3.5" />
+                    Download .txt
+                  </button>
                 </div>
               </div>
-            )}
-
-          {/* Evaluation Metrics */}
-          {transcript?.text && (
-            <EvaluationCard
-              groundTruth={groundTruth}
-              setGroundTruth={setGroundTruth}
-              wer={wer}
-              onCalculate={handleCalculateWER}
-            />
-          )}
-        </section>
-      </main>
-    </div>
-  );
-}
-
-function EvaluationCard({
-  groundTruth,
-  setGroundTruth,
-  wer,
-  onCalculate,
-}: {
-  groundTruth: string;
-  setGroundTruth: (v: string) => void;
-  wer: WERResult | null;
-  onCalculate: () => void;
-}) {
-  const pct = wer ? Math.round(wer.wer * 1000) / 10 : null;
-  const badge = pct === null ? null : readinessBadge(pct);
-
-  return (
-    <div className="w-full">
-      <div className="rounded-lg border border-border bg-card p-5 shadow-sm">
-        <h2 className="mb-3 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-          Evaluation Metrics
-        </h2>
-
-        <label
-          htmlFor="ground-truth"
-          className="mb-2 block text-xs font-medium text-foreground"
-        >
-          Ground Truth (Reference Text)
-        </label>
-        <textarea
-          id="ground-truth"
-          value={groundTruth}
-          onChange={(e) => setGroundTruth(e.target.value)}
-          rows={4}
-          placeholder="Paste the verified reference transcription here…"
-          className="w-full resize-y rounded-md border border-border bg-background px-3 py-2 text-sm leading-relaxed text-foreground shadow-sm transition focus:border-ring focus:outline-none focus:ring-1 focus:ring-ring"
-        />
-
-        <button
-          type="button"
-          onClick={onCalculate}
-          disabled={!groundTruth.trim()}
-          style={{ background: "var(--gradient-primary)" }}
-          className="mt-3 inline-flex h-10 items-center justify-center rounded-md px-5 text-sm font-semibold text-primary-foreground shadow-sm transition hover:opacity-90 disabled:opacity-40"
-        >
-          Calculate WER
-        </button>
-
-        {wer && pct !== null && badge && (
-          <div className="mt-5 border-t border-border pt-5">
-            <div className="flex items-baseline gap-3">
-              <span className="text-4xl font-semibold tabular-nums text-foreground">
-                {pct.toFixed(1)}%
-              </span>
-              <span className="text-xs uppercase tracking-wider text-muted-foreground">
-                Word Error Rate
-              </span>
-            </div>
-
-            <dl className="mt-4 grid grid-cols-4 gap-3 text-center text-xs">
-              <Metric label="Substitutions" value={wer.substitutions} />
-              <Metric label="Deletions" value={wer.deletions} />
-              <Metric label="Insertions" value={wer.insertions} />
-              <Metric label="Ref. Words" value={wer.referenceWords} />
-            </dl>
-
-            <div
-              className={`mt-4 inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-semibold ${badge.classes}`}
-            >
-              <span className={`h-1.5 w-1.5 rounded-full ${badge.dot}`} />
-              {badge.label}
+              <textarea
+                value={transcript}
+                onChange={(e) => setTranscript(e.target.value)}
+                placeholder={
+                  state === "processing"
+                    ? "Transcribing…"
+                    : "Your transcription will appear here. You can edit it freely."
+                }
+                className="min-h-[180px] w-full resize-y rounded-md border border-border bg-background p-3 text-base leading-relaxed text-foreground focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
+              />
+              <div className="mt-2 flex justify-end gap-4 text-xs text-muted-foreground">
+                <span>{wordCount} words</span>
+                <span>{charCount} characters</span>
+              </div>
             </div>
           </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
-function Metric({ label, value }: { label: string; value: number }) {
-  return (
-    <div className="rounded-md border border-border bg-background py-2">
-      <div className="font-mono text-base font-semibold tabular-nums text-foreground">
-        {value}
-      </div>
-      <div className="mt-0.5 text-[10px] uppercase tracking-wider text-muted-foreground">
-        {label}
-      </div>
-    </div>
-  );
-}
-
-function readinessBadge(pct: number) {
-  if (pct <= 10)
-    return {
-      label: "Highly Accurate · Ready for Production",
-      classes: "border-emerald-300 bg-emerald-50 text-emerald-800",
-      dot: "bg-emerald-500",
-    };
-  if (pct <= 20)
-    return {
-      label: "Acceptable · Requires Minor Correction UI",
-      classes: "border-amber-300 bg-amber-50 text-amber-800",
-      dot: "bg-amber-500",
-    };
-  if (pct <= 35)
-    return {
-      label: "Poor · Requires Model Fine-tuning",
-      classes: "border-orange-300 bg-orange-50 text-orange-800",
-      dot: "bg-orange-500",
-    };
-  return {
-    label: "Failure · Not Viable for Commercial Use",
-    classes: "border-red-300 bg-red-50 text-red-800",
-    dot: "bg-red-500",
-  };
-}
-
-
-function RecordButton({
-  state,
-  elapsed,
-  onStart,
-  onStop,
-}: {
-  state: RecState;
-  elapsed: number;
-  onStart: () => void;
-  onStop: () => void;
-}) {
-  if (state === "processing") {
-    return (
-      <button
-        disabled
-        className="inline-flex h-14 min-w-[220px] items-center justify-center gap-2.5 rounded-full border border-border bg-card px-7 text-sm font-semibold text-foreground shadow-sm"
-      >
-        <Loader2 className="h-4 w-4 animate-spin" />
-        Transcribing…
-      </button>
-    );
-  }
-
-  if (state === "recording") {
-    return (
-      <button
-        onClick={onStop}
-        className="inline-flex h-14 min-w-[220px] items-center justify-center gap-2.5 rounded-full bg-destructive px-7 text-sm font-semibold text-destructive-foreground shadow-[var(--shadow-elegant)] transition hover:opacity-90"
-      >
-        <span className="relative flex h-2.5 w-2.5">
-          <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-white opacity-75" />
-          <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-white" />
-        </span>
-        <Square className="h-4 w-4 fill-current" />
-        Stop · <span className="font-mono tabular-nums">
-          {Math.floor(elapsed / 60).toString().padStart(2, "0")}:
-          {Math.floor(elapsed % 60).toString().padStart(2, "0")}
-        </span>
-      </button>
-    );
-  }
-
-  return (
-    <button
-      onClick={onStart}
-      style={{ background: "var(--gradient-primary)", boxShadow: "var(--shadow-elegant)" }}
-      className="inline-flex h-14 min-w-[220px] items-center justify-center gap-2.5 rounded-full px-7 text-sm font-semibold text-primary-foreground transition hover:opacity-90"
-    >
-      <Mic className="h-4 w-4" />
-      Start Recording
-    </button>
-  );
-}
-
-
-function Banner({
-  tone,
-  message,
-  onClose,
-}: {
-  tone: "error" | "warning";
-  message: string;
-  onClose: () => void;
-}) {
-  const styles =
-    tone === "error"
-      ? "border-red-200 bg-red-50 text-red-900"
-      : "border-amber-200 bg-amber-50 text-amber-900";
-  const Icon = tone === "error" ? AlertCircle : CircleDot;
-  return (
-    <div
-      className={`mb-6 flex items-start gap-3 rounded-md border px-4 py-3 text-sm ${styles}`}
-    >
-      <Icon className="mt-0.5 h-4 w-4 shrink-0" />
-      <p className="flex-1">{message}</p>
-      <button
-        onClick={onClose}
-        aria-label="Dismiss"
-        className="opacity-60 transition hover:opacity-100"
-      >
-        <X className="h-4 w-4" />
-      </button>
+        </section>
+      </main>
     </div>
   );
 }
