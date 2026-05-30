@@ -79,7 +79,7 @@ export const Route = createFileRoute("/api/transcribe")({
               );
             }
             const hfRes = await fetch(
-              "https://api-inference.huggingface.co/models/facebook/nllb-200-distilled-600M",
+              "https://router.huggingface.co/hf-inference/models/facebook/nllb-200-distilled-600M",
               {
                 method: "POST",
                 headers: {
@@ -135,7 +135,7 @@ export const Route = createFileRoute("/api/transcribe")({
             const bytes = new Uint8Array(await file.arrayBuffer());
 
             const hfRes = await fetch(
-              "https://api-inference.huggingface.co/models/facebook/mms-1b-all",
+              "https://router.huggingface.co/hf-inference/models/facebook/mms-1b-all",
               {
                 method: "POST",
                 headers: {
