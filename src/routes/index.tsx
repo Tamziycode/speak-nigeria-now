@@ -393,6 +393,52 @@ function Index() {
             </div>
           </div>
 
+          {/* English Translation (Whisper-translatable languages only) */}
+          {transcript?.text &&
+            LANGUAGES.find((l) => l.code === language)?.translatable && (
+              <div className="w-full">
+                <div className="rounded-lg border border-border bg-card p-5 shadow-sm">
+                  <div className="mb-3 flex items-center justify-between">
+                    <h2 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                      English Translation
+                    </h2>
+                    <button
+                      type="button"
+                      onClick={handleTranslate}
+                      disabled={translating || !lastWavRef.current}
+                      style={{ background: "var(--gradient-primary)" }}
+                      className="inline-flex h-8 items-center gap-1.5 rounded-md px-3 text-xs font-semibold text-primary-foreground shadow-sm transition hover:opacity-90 disabled:opacity-40"
+                    >
+                      {translating ? (
+                        <>
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          Translating…
+                        </>
+                      ) : translation ? (
+                        "Re-translate"
+                      ) : (
+                        "Translate to English"
+                      )}
+                    </button>
+                  </div>
+                  {translationError ? (
+                    <p className="min-h-[80px] text-sm text-red-700">
+                      {translationError}
+                    </p>
+                  ) : translation ? (
+                    <p className="min-h-[80px] whitespace-pre-wrap break-words text-base leading-relaxed text-foreground">
+                      {translation}
+                    </p>
+                  ) : (
+                    <p className="min-h-[80px] text-sm italic text-muted-foreground">
+                      Click "Translate to English" to send the recording through
+                      Whisper's translation endpoint.
+                    </p>
+                  )}
+                </div>
+              </div>
+            )}
+
           {/* Evaluation Metrics */}
           {transcript?.text && (
             <EvaluationCard
