@@ -1,45 +1,40 @@
+# Translate to English for all languages
 
-## 1. Clean transcription display
+The native transcript card already exists. Right now the "English Translation" card only appears for Hausa and Yoruba. Extend it to every language in the dropdown.
 
-In `src/routes/index.tsx`, replace the `<pre>{JSON.stringify(transcript)}</pre>` block with:
-- A typed `transcript` state: `{ text: string; raw: unknown } | null` (keep `raw` so Copy can still export the full payload if needed — but Copy will now copy the plain text by default).
-- Render `transcript.text` inside a `<p>` with `whitespace-pre-wrap break-words leading-relaxed text-base text-foreground` for readable wrapping/contrast.
-- Empty state: muted "Awaiting transcription" placeholder.
-- Copy button copies `transcript.text` (plain string).
+## How each language reaches English
 
-## 2. New "Evaluation Metrics" section
+- **Hausa, Yoruba** — already works. Whisper `/audio/translations` with the recorded WAV.
+- **Pidgin** — same Whisper translations endpoint, no language code (auto-detect). Whisper handles Pidgin well because it's English-based.
+- **Igbo, Fulfulde, Kanuri, Ibibio, Tiv** — Whisper can't translate these. Two-step:
+  1. We already have the MMS transcript (native text) from the first pass.
+  2. Send that text to **NLLB-200** (`facebook/nllb-200-distilled-600M`) on HuggingFace with the source language code, target = `eng_Latn`.
 
-Add below the transcript card, only visible once `transcript.text` exists (keeps the idle UI minimal):
-- Heading: "Evaluation Metrics" (matches existing uppercase-tracking label style).
-- `<textarea>` labeled "Ground Truth (Reference Text)" — controlled state `groundTruth`, ~4 rows, same border/focus tokens as the language selector.
-- "Calculate WER" button using the existing `--gradient-primary` style (matches Start Recording).
-- Result panel (only after calculation): big percentage + breakdown (Substitutions, Deletions, Insertions, Reference word count) + the readiness badge.
+  No second audio upload, no re-recording — we translate the text we already have.
 
-## 3. WER utility
+## Files to change
 
-New file `src/lib/wer.ts`:
-- `normalize(s: string)`: lowercase, strip punctuation, collapse whitespace, split into word array.
-- `computeWER(reference: string, hypothesis: string)`: word-level Levenshtein via classic DP matrix with a back-trace to count S / D / I separately.
-- Returns `{ wer: number, substitutions: number, deletions: number, insertions: number, referenceWords: number, hypothesisWords: number }`.
-- Edge cases: empty reference → return `wer: hypothesis.length > 0 ? 1 : 0` and surface a friendly inline message in the UI ("Enter ground truth to evaluate") instead of NaN.
+**`src/routes/api/transcribe.ts`**
+- Add a new branch: if `provider === "nllb"`, read `text` + `sourceLang` form fields, POST to `https://api-inference.huggingface.co/models/facebook/nllb-200-distilled-600M` with `{ inputs: text, parameters: { src_lang, tgt_lang: "eng_Latn" } }`, return `{ text: translation }`.
+- Add NLLB language code map: `ig → ibo_Latn`, `ff → fuv_Latn`, `kr → knc_Latn`, `ibb → ibb_Latn` (fallback to `eng_Latn` if unsupported), `tiv → tiv_Latn`. Any code NLLB doesn't recognise → return a clear 400 so the UI shows "Translation not available for this language".
+- Reuses existing `HF_TOKEN` secret.
 
-Formula: `WER = (S + D + I) / N` where N = reference word count. Displayed as `Math.round(wer * 1000) / 10` %.
+**`src/routes/index.tsx`**
+- Remove the `translatable` gate. The Translation card renders whenever `transcript?.text` exists.
+- `handleTranslate` branches on the selected language's `provider`:
+  - `whisper` (Pidgin/Hausa/Yoruba) → existing audio-based call (`provider=whisper, mode=translate`, language code if set).
+  - `mms` → text-based call (`provider=nllb`, `text=<transcript>`, `sourceLang=<code>`).
+- Button label stays "Translate to English" / "Re-translate" / "Translating…".
+- If NLLB returns "language not supported" for a given MMS code, show the error in the card (no crash, no hidden button).
 
-## 4. Readiness badge
+## Technical notes
 
-Helper in the route file:
-```
-0–10%   → Green   "Highly Accurate · Ready for Production"
-11–20%  → Yellow  "Acceptable · Requires Minor Correction UI"
-21–35%  → Orange  "Poor · Requires Model Fine-tuning"
->35%    → Red     "Failure · Not Viable for Commercial Use"
-```
-Rendered as a pill with colored text + matching border, on a near-white background to stay academic/minimal. Colors come from Tailwind's emerald/amber/orange/red scales (used only here as semantic status colors, not theme tokens).
+- NLLB language codes use BCP-47-ish format: `ibo_Latn` (Igbo), `fuv_Latn` (Nigerian Fulfulde), `knc_Latn` (Central Kanuri), `tiv_Latn` (Tiv). Ibibio (`ibb`) is **not** in NLLB-200 — for that one we'll surface "Translation not available" in the card rather than send a bad request.
+- HuggingFace serverless inference for NLLB sometimes returns 503 "model loading" on first call; pass `{ options: { wait_for_model: true } }` so the request blocks until ready instead of failing.
+- No new dependencies, no new secrets, no styling-token changes.
 
-## Files touched
+## Out of scope
 
-- `src/lib/wer.ts` (new) — pure function, easily unit-testable.
-- `src/routes/index.tsx` — typed transcript, new Evaluation section, badge helper.
-- `src/routes/api/transcribe.ts` — no change (Groq already returns `{text: "..."}`).
-
-After you approve, switch to build mode and I'll implement.
+- Caching translations (re-translate re-hits the API).
+- Choosing a different translation provider per language (single NLLB fallback is enough for now).
+- Translating from English back to native.

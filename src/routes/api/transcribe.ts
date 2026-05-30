@@ -18,6 +18,17 @@ const MMS_LANG_MAP: Record<string, string> = {
   pcm: "pcm",
 };
 
+// NLLB-200 source language codes (BCP-47 style: lang_Script)
+// Tiv and Ibibio are NOT in NLLB-200 → surface a clear error.
+const NLLB_LANG_MAP: Record<string, string> = {
+  ha: "hau_Latn",
+  yo: "yor_Latn",
+  ig: "ibo_Latn",
+  ff: "fuv_Latn", // Nigerian Fulfulde
+  kr: "knc_Latn", // Central Kanuri
+  pcm: "eng_Latn", // Pidgin → treat as English (Whisper path handles it better)
+};
+
 export const Route = createFileRoute("/api/transcribe")({
   server: {
     handlers: {
@@ -37,6 +48,76 @@ export const Route = createFileRoute("/api/transcribe")({
               status: 400,
               headers: jsonHeaders,
             });
+          }
+
+          // ===== NLLB-200 text translation via HuggingFace =====
+          if (provider === "nllb") {
+            const hfToken = process.env.HF_TOKEN;
+            if (!hfToken) {
+              return new Response(
+                JSON.stringify({ error: "HF_TOKEN not configured" }),
+                { status: 500, headers: jsonHeaders },
+              );
+            }
+            const text = (incoming.get("text") as string) || "";
+            const sourceLang = (incoming.get("sourceLang") as string) || "";
+            if (!text.trim()) {
+              return new Response(
+                JSON.stringify({ error: "Missing text to translate" }),
+                { status: 400, headers: jsonHeaders },
+              );
+            }
+            const srcCode = NLLB_LANG_MAP[sourceLang];
+            if (!srcCode) {
+              return new Response(
+                JSON.stringify({
+                  error: `Translation not available for "${sourceLang}". NLLB-200 does not support this language.`,
+                }),
+                { status: 400, headers: jsonHeaders },
+              );
+            }
+            const hfRes = await fetch(
+              "https://api-inference.huggingface.co/models/facebook/nllb-200-distilled-600M",
+              {
+                method: "POST",
+                headers: {
+                  Authorization: `Bearer ${hfToken}`,
+                  "Content-Type": "application/json",
+                },
+                body: JSON.stringify({
+                  inputs: text,
+                  parameters: { src_lang: srcCode, tgt_lang: "eng_Latn" },
+                  options: { wait_for_model: true },
+                }),
+              },
+            );
+            const raw = await hfRes.text();
+            if (!hfRes.ok) {
+              let msg = raw;
+              try {
+                const j = JSON.parse(raw);
+                msg = j.error || raw;
+              } catch {}
+              return new Response(
+                JSON.stringify({ error: `NLLB translation failed: ${msg}` }),
+                { status: hfRes.status, headers: jsonHeaders },
+              );
+            }
+            let translated = "";
+            try {
+              const j = JSON.parse(raw);
+              if (Array.isArray(j) && j[0]?.translation_text) {
+                translated = j[0].translation_text;
+              } else if (j.translation_text) {
+                translated = j.translation_text;
+              }
+            } catch {
+              translated = raw;
+            }
+            return new Response(
+              JSON.stringify({ text: translated, provider: "nllb" }),
+              { status: 200, headers: jsonHeaders },
+            );
           }
 
           // ===== MMS via HuggingFace Inference =====
