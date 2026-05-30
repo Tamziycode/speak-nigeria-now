@@ -79,7 +79,7 @@ export const Route = createFileRoute("/api/transcribe")({
               );
             }
             const hfRes = await fetch(
-              "https://api-inference.huggingface.co/models/facebook/nllb-200-distilled-600M",
+              "https://router.huggingface.co/hf-inference/models/facebook/nllb-200-distilled-600M",
               {
                 method: "POST",
                 headers: {
