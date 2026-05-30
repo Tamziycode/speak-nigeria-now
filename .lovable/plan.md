@@ -1,40 +1,44 @@
-# Translate to English for all languages
+# Fix nonsense Hausa/Yoruba output
 
-The native transcript card already exists. Right now the "English Translation" card only appears for Hausa and Yoruba. Extend it to every language in the dropdown.
+## What's wrong
 
-## How each language reaches English
+Whisper-large-v3 (Groq) lists Hausa and Yoruba as "supported" but in practice hallucinates on them — that's why you got `🎵`, Malay ("Terima kasih kerana menonton!"), and the garbled "I am a woman, a woman…" translation. Meta MMS actually has dedicated acoustic models for both languages and produces real transcripts.
 
-- **Hausa, Yoruba** — already works. Whisper `/audio/translations` with the recorded WAV.
-- **Pidgin** — same Whisper translations endpoint, no language code (auto-detect). Whisper handles Pidgin well because it's English-based.
-- **Igbo, Fulfulde, Kanuri, Ibibio, Tiv** — Whisper can't translate these. Two-step:
-  1. We already have the MMS transcript (native text) from the first pass.
-  2. Send that text to **NLLB-200** (`facebook/nllb-200-distilled-600M`) on HuggingFace with the source language code, target = `eng_Latn`.
+## Change
 
-  No second audio upload, no re-recording — we translate the text we already have.
+**`src/routes/index.tsx`** — flip Hausa and Yoruba to MMS:
 
-## Files to change
+```ts
+{ label: "Hausa",  code: "ha", provider: "mms" },
+{ label: "Yoruba", code: "yo", provider: "mms" },
+```
 
-**`src/routes/api/transcribe.ts`**
-- Add a new branch: if `provider === "nllb"`, read `text` + `sourceLang` form fields, POST to `https://api-inference.huggingface.co/models/facebook/nllb-200-distilled-600M` with `{ inputs: text, parameters: { src_lang, tgt_lang: "eng_Latn" } }`, return `{ text: translation }`.
-- Add NLLB language code map: `ig → ibo_Latn`, `ff → fuv_Latn`, `kr → knc_Latn`, `ibb → ibb_Latn` (fallback to `eng_Latn` if unsupported), `tiv → tiv_Latn`. Any code NLLB doesn't recognise → return a clear 400 so the UI shows "Translation not available for this language".
-- Reuses existing `HF_TOKEN` secret.
+Pidgin stays on Whisper (English-based, Whisper handles it well).
 
-**`src/routes/index.tsx`**
-- Remove the `translatable` gate. The Translation card renders whenever `transcript?.text` exists.
-- `handleTranslate` branches on the selected language's `provider`:
-  - `whisper` (Pidgin/Hausa/Yoruba) → existing audio-based call (`provider=whisper, mode=translate`, language code if set).
-  - `mms` → text-based call (`provider=nllb`, `text=<transcript>`, `sourceLang=<code>`).
-- Button label stays "Translate to English" / "Re-translate" / "Translating…".
-- If NLLB returns "language not supported" for a given MMS code, show the error in the card (no crash, no hidden button).
+**`src/routes/api/transcribe.ts`** — extend the MMS ISO-639-3 map so the new codes resolve correctly:
 
-## Technical notes
+```ts
+const MMS_LANG_MAP = {
+  ha: "hau",   // Hausa
+  yo: "yor",   // Yoruba
+  ig: "ibo",
+  ff: "fuv",
+  kr: "knc",
+  ibb: "ibb",
+  tiv: "tiv",
+  pcm: "pcm",
+};
+```
 
-- NLLB language codes use BCP-47-ish format: `ibo_Latn` (Igbo), `fuv_Latn` (Nigerian Fulfulde), `knc_Latn` (Central Kanuri), `tiv_Latn` (Tiv). Ibibio (`ibb`) is **not** in NLLB-200 — for that one we'll surface "Translation not available" in the card rather than send a bad request.
-- HuggingFace serverless inference for NLLB sometimes returns 503 "model loading" on first call; pass `{ options: { wait_for_model: true } }` so the request blocks until ready instead of failing.
-- No new dependencies, no new secrets, no styling-token changes.
+## Translation still works
+
+The NLLB branch we just built already covers Hausa (`hau_Latn`) and Yoruba (`yor_Latn`), so the "Translate to English" button keeps working — it just goes MMS → NLLB instead of Whisper → Whisper-translate. Pidgin keeps using the Whisper audio-translate path.
+
+## UI copy
+
+Update the "Engine:" helper text mapping so Hausa/Yoruba show "Meta MMS (HuggingFace)" instead of "Whisper-large-v3 (Groq)". The `translatable` flag is no longer used for gating (already removed) — safe to drop from the type.
 
 ## Out of scope
 
-- Caching translations (re-translate re-hits the API).
-- Choosing a different translation provider per language (single NLLB fallback is enough for now).
-- Translating from English back to native.
+- No changes to recording, WAV encoding, or the route/API shape.
+- No new dependencies or secrets.
