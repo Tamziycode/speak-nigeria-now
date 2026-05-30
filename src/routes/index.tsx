@@ -28,18 +28,23 @@ export const Route = createFileRoute("/")({
   }),
 });
 
-// `supported: true` = native Groq Whisper language code.
-// Unsupported languages are still selectable (for logging/UX) but we omit the
-// `language` field on the API call and let Whisper auto-detect.
-const LANGUAGES: { label: string; code: string; supported: boolean }[] = [
-  { label: "Nigerian Pidgin", code: "pcm", supported: false },
-  { label: "Hausa", code: "ha", supported: true },
-  { label: "Yoruba", code: "yo", supported: true },
-  { label: "Igbo", code: "ig", supported: false },
-  { label: "Fulfulde", code: "ff", supported: false },
-  { label: "Kanuri", code: "kr", supported: false },
-  { label: "Ibibio", code: "ibb", supported: false },
-  { label: "Tiv", code: "tiv", supported: false },
+// provider routes the request: Whisper for Hausa/Yoruba/Pidgin,
+// Meta MMS (via HuggingFace) for the rest.
+type Provider = "whisper" | "mms";
+const LANGUAGES: {
+  label: string;
+  code: string;
+  provider: Provider;
+  translatable?: boolean; // Whisper /translations supports → English
+}[] = [
+  { label: "Nigerian Pidgin", code: "pcm", provider: "whisper" },
+  { label: "Hausa", code: "ha", provider: "whisper", translatable: true },
+  { label: "Yoruba", code: "yo", provider: "whisper", translatable: true },
+  { label: "Igbo", code: "ig", provider: "mms" },
+  { label: "Fulfulde", code: "ff", provider: "mms" },
+  { label: "Kanuri", code: "kr", provider: "mms" },
+  { label: "Ibibio", code: "ibb", provider: "mms" },
+  { label: "Tiv", code: "tiv", provider: "mms" },
 ];
 
 
@@ -52,6 +57,10 @@ function Index() {
   const [transcript, setTranscript] = useState<{ text: string; raw: unknown } | null>(null);
   const [groundTruth, setGroundTruth] = useState("");
   const [wer, setWer] = useState<WERResult | null>(null);
+  const [translation, setTranslation] = useState<string | null>(null);
+  const [translating, setTranslating] = useState(false);
+  const [translationError, setTranslationError] = useState<string | null>(null);
+  const lastWavRef = useRef<Blob | null>(null);
 
   const [error, setError] = useState<string | null>(null);
   const [warning, setWarning] = useState<string | null>(null);
@@ -84,6 +93,8 @@ function Index() {
     setWarning(null);
     setTranscript(null);
     setWer(null);
+    setTranslation(null);
+    setTranslationError(null);
 
     setPermissionDenied(false);
 
@@ -145,10 +156,15 @@ function Index() {
       const raw = new Blob(chunksRef.current, { type: "audio/webm" });
       const wav = await blobTo16kWav(raw);
 
+      lastWavRef.current = wav;
+      const lang = LANGUAGES.find((l) => l.code === language);
+      const provider: Provider = lang?.provider ?? "whisper";
+
       const form = new FormData();
       form.append("file", new File([wav], "audio.wav", { type: "audio/wav" }));
-      const lang = LANGUAGES.find((l) => l.code === language);
-      if (lang?.supported) form.append("language", lang.code);
+      form.append("provider", provider);
+      // Pidgin has no Whisper code — let Whisper auto-detect.
+      if (lang && lang.code !== "pcm") form.append("language", lang.code);
 
       const controller = new AbortController();
       slowWarnRef.current = window.setTimeout(() => {
@@ -204,6 +220,35 @@ function Index() {
   const handleCalculateWER = () => {
     if (!transcript?.text || !groundTruth.trim()) return;
     setWer(computeWER(groundTruth, transcript.text));
+  };
+
+  const handleTranslate = async () => {
+    const wav = lastWavRef.current;
+    if (!wav) return;
+    setTranslating(true);
+    setTranslationError(null);
+    try {
+      const form = new FormData();
+      form.append("file", new File([wav], "audio.wav", { type: "audio/wav" }));
+      form.append("provider", "whisper");
+      form.append("mode", "translate");
+      const res = await fetch("/api/transcribe", { method: "POST", body: form });
+      const json = await res.json().catch(() => ({ error: "Invalid response" }));
+      if (!res.ok) {
+        const errField = (json as { error?: unknown }).error;
+        const msg = typeof errField === "string" ? errField : `Translation failed (${res.status})`;
+        setTranslationError(msg);
+        return;
+      }
+      const text = typeof (json as { text?: unknown }).text === "string"
+        ? (json as { text: string }).text.trim()
+        : "";
+      setTranslation(text);
+    } catch (e) {
+      setTranslationError((e as Error).message || "Translation failed");
+    } finally {
+      setTranslating(false);
+    }
   };
 
 
@@ -274,17 +319,19 @@ function Index() {
             >
               {LANGUAGES.map((l) => (
                 <option key={l.code} value={l.code}>
-                  {l.label} {l.supported ? "" : "— unsupported by model"}
+                  {l.label}
                 </option>
               ))}
             </select>
-            {!LANGUAGES.find((l) => l.code === language)?.supported && (
-              <p className="mt-2 text-xs leading-relaxed text-amber-700">
-                Whisper-large-v3 has no training data for this language. The
-                model will auto-detect and almost always return English. Use
-                Hausa or Yoruba for meaningful results.
-              </p>
-            )}
+            <p className="mt-2 text-xs leading-relaxed text-muted-foreground">
+              {(() => {
+                const l = LANGUAGES.find((x) => x.code === language);
+                if (!l) return null;
+                return l.provider === "whisper"
+                  ? "Engine: Whisper-large-v3 (Groq)"
+                  : "Engine: Meta MMS (HuggingFace)";
+              })()}
+            </p>
           </div>
 
           {/* Record button */}
@@ -345,6 +392,52 @@ function Index() {
               )}
             </div>
           </div>
+
+          {/* English Translation (Whisper-translatable languages only) */}
+          {transcript?.text &&
+            LANGUAGES.find((l) => l.code === language)?.translatable && (
+              <div className="w-full">
+                <div className="rounded-lg border border-border bg-card p-5 shadow-sm">
+                  <div className="mb-3 flex items-center justify-between">
+                    <h2 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                      English Translation
+                    </h2>
+                    <button
+                      type="button"
+                      onClick={handleTranslate}
+                      disabled={translating || !lastWavRef.current}
+                      style={{ background: "var(--gradient-primary)" }}
+                      className="inline-flex h-8 items-center gap-1.5 rounded-md px-3 text-xs font-semibold text-primary-foreground shadow-sm transition hover:opacity-90 disabled:opacity-40"
+                    >
+                      {translating ? (
+                        <>
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          Translating…
+                        </>
+                      ) : translation ? (
+                        "Re-translate"
+                      ) : (
+                        "Translate to English"
+                      )}
+                    </button>
+                  </div>
+                  {translationError ? (
+                    <p className="min-h-[80px] text-sm text-red-700">
+                      {translationError}
+                    </p>
+                  ) : translation ? (
+                    <p className="min-h-[80px] whitespace-pre-wrap break-words text-base leading-relaxed text-foreground">
+                      {translation}
+                    </p>
+                  ) : (
+                    <p className="min-h-[80px] text-sm italic text-muted-foreground">
+                      Click "Translate to English" to send the recording through
+                      Whisper's translation endpoint.
+                    </p>
+                  )}
+                </div>
+              </div>
+            )}
 
           {/* Evaluation Metrics */}
           {transcript?.text && (
