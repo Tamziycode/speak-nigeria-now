@@ -290,17 +290,19 @@ function Index() {
             >
               {LANGUAGES.map((l) => (
                 <option key={l.code} value={l.code}>
-                  {l.label} {l.supported ? "" : "— unsupported by model"}
+                  {l.label}
                 </option>
               ))}
             </select>
-            {!LANGUAGES.find((l) => l.code === language)?.supported && (
-              <p className="mt-2 text-xs leading-relaxed text-amber-700">
-                Whisper-large-v3 has no training data for this language. The
-                model will auto-detect and almost always return English. Use
-                Hausa or Yoruba for meaningful results.
-              </p>
-            )}
+            <p className="mt-2 text-xs leading-relaxed text-muted-foreground">
+              {(() => {
+                const l = LANGUAGES.find((x) => x.code === language);
+                if (!l) return null;
+                return l.provider === "whisper"
+                  ? "Engine: Whisper-large-v3 (Groq)"
+                  : "Engine: Meta MMS (HuggingFace)";
+              })()}
+            </p>
           </div>
 
           {/* Record button */}
