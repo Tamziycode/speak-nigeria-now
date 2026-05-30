@@ -197,7 +197,7 @@ export const Route = createFileRoute("/api/transcribe")({
             const durationSec = byteRate > 0 ? (bytes.length - 44) / byteRate : 0;
 
             const callMms = async (body: Uint8Array) => {
-              const r = await fetch(mmsUrl, { method: "POST", headers: mmsHeaders, body });
+              const r = await fetch(mmsUrl, { method: "POST", headers: mmsHeaders, body: body as BodyInit });
               const txt = await r.text();
               if (!r.ok) {
                 let msg = txt;
