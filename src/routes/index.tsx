@@ -274,10 +274,17 @@ function Index() {
             >
               {LANGUAGES.map((l) => (
                 <option key={l.code} value={l.code}>
-                  {l.label}
+                  {l.label} {l.supported ? "" : "— unsupported by model"}
                 </option>
               ))}
             </select>
+            {!LANGUAGES.find((l) => l.code === language)?.supported && (
+              <p className="mt-2 text-xs leading-relaxed text-amber-700">
+                Whisper-large-v3 has no training data for this language. The
+                model will auto-detect and almost always return English. Use
+                Hausa or Yoruba for meaningful results.
+              </p>
+            )}
           </div>
 
           {/* Record button */}
