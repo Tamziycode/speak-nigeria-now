@@ -154,10 +154,15 @@ function Index() {
       const raw = new Blob(chunksRef.current, { type: "audio/webm" });
       const wav = await blobTo16kWav(raw);
 
+      lastWavRef.current = wav;
+      const lang = LANGUAGES.find((l) => l.code === language);
+      const provider: Provider = lang?.provider ?? "whisper";
+
       const form = new FormData();
       form.append("file", new File([wav], "audio.wav", { type: "audio/wav" }));
-      const lang = LANGUAGES.find((l) => l.code === language);
-      if (lang?.supported) form.append("language", lang.code);
+      form.append("provider", provider);
+      // Pidgin has no Whisper code — let Whisper auto-detect.
+      if (lang && lang.code !== "pcm") form.append("language", lang.code);
 
       const controller = new AbortController();
       slowWarnRef.current = window.setTimeout(() => {
