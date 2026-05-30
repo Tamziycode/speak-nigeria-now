@@ -135,7 +135,7 @@ export const Route = createFileRoute("/api/transcribe")({
             const bytes = new Uint8Array(await file.arrayBuffer());
 
             const hfRes = await fetch(
-              "https://api-inference.huggingface.co/models/facebook/mms-1b-all",
+              "https://router.huggingface.co/hf-inference/models/facebook/mms-1b-all",
               {
                 method: "POST",
                 headers: {
