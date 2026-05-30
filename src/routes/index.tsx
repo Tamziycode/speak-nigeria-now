@@ -223,16 +223,34 @@ function Index() {
   };
 
   const handleTranslate = async () => {
-    const wav = lastWavRef.current;
-    if (!wav) return;
+    if (!transcript?.text) return;
+    const lang = LANGUAGES.find((l) => l.code === language);
     setTranslating(true);
     setTranslationError(null);
     try {
       const form = new FormData();
-      form.append("file", new File([wav], "audio.wav", { type: "audio/wav" }));
-      form.append("provider", "whisper");
-      form.append("mode", "translate");
-      const res = await fetch("/api/transcribe", { method: "POST", body: form });
+      let res: Response;
+      if (lang?.provider === "mms") {
+        // Text-based translation via NLLB-200
+        form.append("provider", "nllb");
+        form.append("text", transcript.text);
+        form.append("sourceLang", language);
+        // dummy file to satisfy multipart parsing on the server
+        form.append("file", new File([new Uint8Array()], "empty.bin"));
+        res = await fetch("/api/transcribe", { method: "POST", body: form });
+      } else {
+        // Whisper audio translation (Hausa, Yoruba, Pidgin)
+        const wav = lastWavRef.current;
+        if (!wav) {
+          setTranslationError("No audio available. Please record again.");
+          setTranslating(false);
+          return;
+        }
+        form.append("file", new File([wav], "audio.wav", { type: "audio/wav" }));
+        form.append("provider", "whisper");
+        form.append("mode", "translate");
+        res = await fetch("/api/transcribe", { method: "POST", body: form });
+      }
       const json = await res.json().catch(() => ({ error: "Invalid response" }));
       if (!res.ok) {
         const errField = (json as { error?: unknown }).error;
