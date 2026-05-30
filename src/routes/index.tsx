@@ -423,7 +423,7 @@ function Index() {
                     <button
                       type="button"
                       onClick={handleTranslate}
-                      disabled={translating || !lastWavRef.current}
+                      disabled={translating}
                       style={{ background: "var(--gradient-primary)" }}
                       className="inline-flex h-8 items-center gap-1.5 rounded-md px-3 text-xs font-semibold text-primary-foreground shadow-sm transition hover:opacity-90 disabled:opacity-40"
                     >
