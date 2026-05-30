@@ -57,6 +57,10 @@ function Index() {
   const [transcript, setTranscript] = useState<{ text: string; raw: unknown } | null>(null);
   const [groundTruth, setGroundTruth] = useState("");
   const [wer, setWer] = useState<WERResult | null>(null);
+  const [translation, setTranslation] = useState<string | null>(null);
+  const [translating, setTranslating] = useState(false);
+  const [translationError, setTranslationError] = useState<string | null>(null);
+  const lastWavRef = useRef<Blob | null>(null);
 
   const [error, setError] = useState<string | null>(null);
   const [warning, setWarning] = useState<string | null>(null);
