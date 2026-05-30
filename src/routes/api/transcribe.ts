@@ -10,6 +10,8 @@ const jsonHeaders = { "Content-Type": "application/json", ...corsHeaders };
 
 // ISO 639-3 codes for MMS adapters
 const MMS_LANG_MAP: Record<string, string> = {
+  ha: "hau", // Hausa
+  yo: "yor", // Yoruba
   ig: "ibo",
   ff: "fuv", // Nigerian Fulfulde
   kr: "knc", // Central Kanuri
