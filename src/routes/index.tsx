@@ -93,6 +93,8 @@ function Index() {
     setWarning(null);
     setTranscript(null);
     setWer(null);
+    setTranslation(null);
+    setTranslationError(null);
 
     setPermissionDenied(false);
 
