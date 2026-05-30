@@ -72,14 +72,18 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
     meta: [
       { charSet: "utf-8" },
       { name: "viewport", content: "width=device-width, initial-scale=1" },
-      { title: "Lovable App" },
-      { name: "description", content: "Lovable Generated Project" },
+      { title: "speakNigeriaNow" },
+      { name: "description", content: "A web app for real-time speech-to-text transcription of Nigerian languages." },
       { name: "author", content: "Lovable" },
-      { property: "og:title", content: "Lovable App" },
-      { property: "og:description", content: "Lovable Generated Project" },
+      { property: "og:title", content: "speakNigeriaNow" },
+      { property: "og:description", content: "A web app for real-time speech-to-text transcription of Nigerian languages." },
       { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary" },
       { name: "twitter:site", content: "@Lovable" },
+      { name: "twitter:title", content: "speakNigeriaNow" },
+      { name: "twitter:description", content: "A web app for real-time speech-to-text transcription of Nigerian languages." },
+      { property: "og:image", content: "https://pub-bb2e103a32db4e198524a2e9ed8f35b4.r2.dev/a5c6c788-9a04-4bc4-a3c4-00892624ecf0/id-preview-6cab27fd--402ba0f4-be99-4c9d-951d-04037c19a1f7.lovable.app-1779794499478.png" },
+      { name: "twitter:image", content: "https://pub-bb2e103a32db4e198524a2e9ed8f35b4.r2.dev/a5c6c788-9a04-4bc4-a3c4-00892624ecf0/id-preview-6cab27fd--402ba0f4-be99-4c9d-951d-04037c19a1f7.lovable.app-1779794499478.png" },
     ],
     links: [
       {
