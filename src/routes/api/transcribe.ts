@@ -30,6 +30,7 @@ export const Route = createFileRoute("/api/transcribe")({
           const incoming = await request.formData();
           const file = incoming.get("file");
           const language = ((incoming.get("language") as string) || "").toLowerCase();
+          const mode = ((incoming.get("mode") as string) || "transcribe").toLowerCase();
 
           if (!file || !(file instanceof File)) {
             return new Response(JSON.stringify({ error: "Missing audio file" }), {
@@ -45,7 +46,9 @@ export const Route = createFileRoute("/api/transcribe")({
             );
           }
 
-          if (!SUPPORTED.has(language)) {
+          const isTranslate = mode === "translate";
+
+          if (!isTranslate && !SUPPORTED.has(language)) {
             return new Response(
               JSON.stringify({
                 error: "Unsupported language. Use 'ha', 'yo', or 'pcm'.",
@@ -61,12 +64,16 @@ export const Route = createFileRoute("/api/transcribe")({
           upstream.append("temperature", "0.0");
           // Whisper has codes for Hausa (ha) and Yoruba (yo). Nigerian Pidgin
           // has no ISO Whisper code — let the model auto-detect.
-          if (language === "ha" || language === "yo") {
+          if (!isTranslate && (language === "ha" || language === "yo")) {
             upstream.append("language", language);
           }
 
+          const endpoint = isTranslate
+            ? "https://api.groq.com/openai/v1/audio/translations"
+            : "https://api.groq.com/openai/v1/audio/transcriptions";
+
           const res = await fetch(
-            "https://api.groq.com/openai/v1/audio/transcriptions",
+            endpoint,
             {
               method: "POST",
               headers: { Authorization: `Bearer ${apiKey}` },
