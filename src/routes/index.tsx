@@ -576,7 +576,7 @@ function Index() {
                   <button
                     type="button"
                     onClick={translateToEnglish}
-                    disabled={!lastAudioFileRef.current || translating || busy}
+                    disabled={!audioUrl || translating || busy}
                     className="inline-flex items-center gap-1.5 rounded-md border border-primary bg-primary px-2.5 py-1 text-xs font-semibold text-primary-foreground transition hover:opacity-90 disabled:opacity-40"
                   >
                     {translating ? (
