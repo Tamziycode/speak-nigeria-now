@@ -54,6 +54,9 @@ function Index() {
   const [state, setState] = useState<RecState>("idle");
   const [elapsed, setElapsed] = useState(0);
   const [transcript, setTranscript] = useState("");
+  const [translation, setTranslation] = useState("");
+  const [translating, setTranslating] = useState(false);
+  const [copiedTranslation, setCopiedTranslation] = useState(false);
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
@@ -66,6 +69,7 @@ function Index() {
   const startTimeRef = useRef<number>(0);
   const timerRef = useRef<number | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const lastAudioFileRef = useRef<File | null>(null);
 
   // API health
   useEffect(() => {
