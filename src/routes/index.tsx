@@ -185,6 +185,12 @@ function Index() {
       setError("Record or upload audio first.");
       return;
     }
+    // Cache: if we already translated this exact audio, keep the existing result.
+    // Whisper sampling makes repeated calls return slightly different text even
+    // at temperature 0, so we deliberately do not re-run for the same file.
+    if (translatedForFileRef.current === file && translation) {
+      return;
+    }
     setError(null);
     setTranslating(true);
     try {
