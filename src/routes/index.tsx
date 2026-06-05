@@ -345,6 +345,26 @@ function Index() {
     URL.revokeObjectURL(url);
   };
 
+  const handleCopyTranslation = async () => {
+    if (!translation) return;
+    await navigator.clipboard.writeText(translation);
+    setCopiedTranslation(true);
+    setTimeout(() => setCopiedTranslation(false), 1500);
+  };
+
+  const handleDownloadTranslation = () => {
+    if (!translation) return;
+    const blob = new Blob([translation], { type: "text/plain;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `translation-en-${Date.now()}.txt`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
   const { wordCount, charCount } = useMemo(() => {
     const trimmed = transcript.trim();
     return {
@@ -352,6 +372,14 @@ function Index() {
       charCount: transcript.length,
     };
   }, [transcript]);
+
+  const { translationWordCount, translationCharCount } = useMemo(() => {
+    const trimmed = translation.trim();
+    return {
+      translationWordCount: trimmed ? trimmed.split(/\s+/).length : 0,
+      translationCharCount: translation.length,
+    };
+  }, [translation]);
 
   const formatTime = (s: number) => {
     const m = Math.floor(s / 60).toString().padStart(2, "0");
