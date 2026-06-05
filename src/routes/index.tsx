@@ -9,6 +9,7 @@ import {
   Download,
   Upload,
   X,
+  Languages,
 } from "lucide-react";
 import { blobTo16kWav } from "@/lib/recorder";
 
@@ -53,6 +54,9 @@ function Index() {
   const [state, setState] = useState<RecState>("idle");
   const [elapsed, setElapsed] = useState(0);
   const [transcript, setTranscript] = useState("");
+  const [translation, setTranslation] = useState("");
+  const [translating, setTranslating] = useState(false);
+  const [copiedTranslation, setCopiedTranslation] = useState(false);
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
@@ -65,6 +69,7 @@ function Index() {
   const startTimeRef = useRef<number>(0);
   const timerRef = useRef<number | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const lastAudioFileRef = useRef<File | null>(null);
 
   // API health
   useEffect(() => {
@@ -78,8 +83,13 @@ function Index() {
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
       if (!raw) return;
-      const saved = JSON.parse(raw) as { transcript?: string; language?: string };
+      const saved = JSON.parse(raw) as {
+        transcript?: string;
+        translation?: string;
+        language?: string;
+      };
       if (saved.transcript) setTranscript(saved.transcript);
+      if (saved.translation) setTranslation(saved.translation);
       if (saved.language && LANGUAGES.some((l) => l.code === saved.language)) {
         setLanguage(saved.language);
       }
@@ -88,17 +98,17 @@ function Index() {
     }
   }, []);
 
-  // Persist transcript + language
+  // Persist transcript + translation + language
   useEffect(() => {
     try {
       localStorage.setItem(
         STORAGE_KEY,
-        JSON.stringify({ transcript, language }),
+        JSON.stringify({ transcript, translation, language }),
       );
     } catch {
       /* ignore */
     }
-  }, [transcript, language]);
+  }, [transcript, translation, language]);
 
   // Revoke object URL on change/unmount
   useEffect(() => {
@@ -125,10 +135,13 @@ function Index() {
     async (file: File) => {
       setState("processing");
       setError(null);
+      setTranslation("");
+      lastAudioFileRef.current = file;
       try {
         const form = new FormData();
         form.append("file", file);
         form.append("language", language);
+        form.append("mode", "transcribe");
 
         const res = await fetch("/api/transcribe", {
           method: "POST",
@@ -163,6 +176,50 @@ function Index() {
     },
     [language],
   );
+
+  const translateToEnglish = useCallback(async () => {
+    const file = lastAudioFileRef.current;
+    if (!file) {
+      setError("Record or upload audio first.");
+      return;
+    }
+    setError(null);
+    setTranslating(true);
+    try {
+      const form = new FormData();
+      form.append("file", file);
+      form.append("mode", "translate");
+      form.append("language", language);
+
+      const res = await fetch("/api/transcribe", {
+        method: "POST",
+        body: form,
+      });
+      const json = await res
+        .json()
+        .catch(() => ({ error: "Invalid response from server" }));
+
+      if (!res.ok) {
+        const errField = (json as { error?: unknown }).error;
+        const msg =
+          typeof errField === "string"
+            ? errField
+            : `Translation failed (${res.status})`;
+        setError(msg);
+        return;
+      }
+
+      const text =
+        typeof (json as { text?: unknown }).text === "string"
+          ? (json as { text: string }).text.trim()
+          : "";
+      setTranslation(text);
+    } catch (e) {
+      setError((e as Error).message || "Network error. Please try again.");
+    } finally {
+      setTranslating(false);
+    }
+  }, [language]);
 
   const startRecording = useCallback(async () => {
     setError(null);
@@ -288,6 +345,26 @@ function Index() {
     URL.revokeObjectURL(url);
   };
 
+  const handleCopyTranslation = async () => {
+    if (!translation) return;
+    await navigator.clipboard.writeText(translation);
+    setCopiedTranslation(true);
+    setTimeout(() => setCopiedTranslation(false), 1500);
+  };
+
+  const handleDownloadTranslation = () => {
+    if (!translation) return;
+    const blob = new Blob([translation], { type: "text/plain;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `translation-en-${Date.now()}.txt`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
   const { wordCount, charCount } = useMemo(() => {
     const trimmed = transcript.trim();
     return {
@@ -295,6 +372,14 @@ function Index() {
       charCount: transcript.length,
     };
   }, [transcript]);
+
+  const { translationWordCount, translationCharCount } = useMemo(() => {
+    const trimmed = translation.trim();
+    return {
+      translationWordCount: trimmed ? trimmed.split(/\s+/).length : 0,
+      translationCharCount: translation.length,
+    };
+  }, [translation]);
 
   const formatTime = (s: number) => {
     const m = Math.floor(s / 60).toString().padStart(2, "0");
@@ -488,6 +573,19 @@ function Index() {
                     <Download className="h-3.5 w-3.5" />
                     Download .txt
                   </button>
+                  <button
+                    type="button"
+                    onClick={translateToEnglish}
+                    disabled={!audioUrl || translating || busy}
+                    className="inline-flex items-center gap-1.5 rounded-md border border-primary bg-primary px-2.5 py-1 text-xs font-semibold text-primary-foreground transition hover:opacity-90 disabled:opacity-40"
+                  >
+                    {translating ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    ) : (
+                      <Languages className="h-3.5 w-3.5" />
+                    )}
+                    {translating ? "Translating…" : "Translate to English"}
+                  </button>
                 </div>
               </div>
               <textarea
@@ -506,6 +604,56 @@ function Index() {
               </div>
             </div>
           </div>
+
+          {/* English translation */}
+          {(translation || translating) && (
+            <div className="w-full">
+              <div className="rounded-lg border border-border bg-card p-5 shadow-sm">
+                <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                  <h2 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                    English Translation
+                  </h2>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={handleCopyTranslation}
+                      disabled={!translation}
+                      className="inline-flex items-center gap-1.5 rounded-md border border-border bg-card px-2.5 py-1 text-xs font-medium text-foreground transition hover:bg-accent disabled:opacity-40"
+                    >
+                      {copiedTranslation ? (
+                        <>
+                          <Check className="h-3.5 w-3.5" /> Copied
+                        </>
+                      ) : (
+                        <>
+                          <Copy className="h-3.5 w-3.5" /> Copy
+                        </>
+                      )}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleDownloadTranslation}
+                      disabled={!translation}
+                      className="inline-flex items-center gap-1.5 rounded-md border border-border bg-card px-2.5 py-1 text-xs font-medium text-foreground transition hover:bg-accent disabled:opacity-40"
+                    >
+                      <Download className="h-3.5 w-3.5" />
+                      Download .txt
+                    </button>
+                  </div>
+                </div>
+                <textarea
+                  value={translation}
+                  onChange={(e) => setTranslation(e.target.value)}
+                  placeholder={translating ? "Translating…" : ""}
+                  className="min-h-[140px] w-full resize-y rounded-md border border-border bg-background p-3 text-base leading-relaxed text-foreground focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
+                />
+                <div className="mt-2 flex justify-end gap-4 text-xs text-muted-foreground">
+                  <span>{translationWordCount} words</span>
+                  <span>{translationCharCount} characters</span>
+                </div>
+              </div>
+            </div>
+          )}
         </section>
       </main>
     </div>

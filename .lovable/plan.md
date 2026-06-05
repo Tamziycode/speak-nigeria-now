@@ -1,27 +1,33 @@
-# Fix "Model not supported by provider hf-inference"
+## Goal
+Add manual English translation of the recorded/uploaded audio via Groq's Whisper `/audio/translations` endpoint, surfaced as a button next to Copy/Download and rendered in a new panel below the transcription panel.
 
-## Root cause
+## Changes
 
-`router.huggingface.co/hf-inference/models/facebook/nllb-200-distilled-600M` returns `Model not supported by provider hf-inference`. HF removed NLLB from the serverless `hf-inference` provider — it's a provider-side change, not a code bug. The same token works for MMS because MMS is still on that provider.
+### 1. `src/routes/api/transcribe.ts`
+- Add a second handler path by accepting a new form field `mode` (`"transcribe"` | `"translate"`, default `"transcribe"`).
+- When `mode === "translate"`:
+  - POST the audio file to `https://api.groq.com/openai/v1/audio/translations` with `model=whisper-large-v3`, `response_format=json`, `temperature=0.0`.
+  - Do NOT send a `language` param (translations endpoint auto-detects source and always outputs English).
+  - Keep the same 25 MB cap, CORS, and error envelope.
+- Keep existing transcription behavior unchanged.
 
-## Fix (single file: `src/routes/api/transcribe.ts`, NLLB branch only)
-
-Try providers/models in order and use the first that returns 200. Stop at the first success; only error out if all fail.
-
-1. **Primary — HF router auto-provider**: POST to `https://router.huggingface.co/v1/chat/completions` (OpenAI-compatible) using a translation-capable instruct model (`meta-llama/Llama-3.3-70B-Instruct` or `Qwen/Qwen2.5-72B-Instruct`) with a strict system prompt: "Translate the user text from {srcLang full name} to English. Output only the translation, no preface." Map our `ha/yo/ig/ff/kr/pcm` codes to human names for the prompt. Parse `choices[0].message.content`.
-
-2. **Fallback — Groq**: If `GROQ_API_KEY` is set, hit `https://api.groq.com/openai/v1/chat/completions` with `llama-3.3-70b-versatile` and the same prompt. Groq is already wired for Whisper so the key exists.
-
-3. **Last resort**: Return the existing 400 with a clearer message ("Translation providers unavailable — try again shortly") instead of leaking `hf-inference`.
-
-Keep request/response shape identical (`{ text, provider: "nllb" }` — leave the provider tag as `"nllb"` so the frontend needs no changes, or rename to `"llm"` if you prefer; frontend only reads `text`).
+### 2. `src/routes/index.tsx`
+- New state: `translation: string`, `translating: boolean`, `lastAudioFile: File | null` (stash the most recent File/Blob used for transcription so the translate button can reuse it without re-recording).
+- Update `sendForTranscription` to remember the `File` it sent (store in ref `lastAudioFileRef`).
+- New handler `translateToEnglish()`:
+  - Guard: requires `lastAudioFileRef.current`; otherwise show error "Record or upload audio first."
+  - POSTs to `/api/transcribe` with `mode=translate` and the stored file.
+  - Sets `translation` on success; sets `error` on failure.
+- New "Translate to English" button in the transcription panel header row (next to Copy / Download). Disabled when no audio or while busy. Shows spinner while translating.
+- New panel rendered below the transcription panel when `translation || translating`:
+  - Title: "English Translation"
+  - Editable `<textarea>` bound to `translation`
+  - Its own Copy + Download `.txt` buttons (filename `translation-en-${ts}.txt`)
+  - Word / character counts
+- Persist `translation` alongside transcript in `localStorage` under `STORAGE_KEY`.
+- Clear `translation` when a new recording/upload starts so the panel reflects the current audio.
 
 ## Out of scope
-
-- MMS chunking (already done last turn).
-- Whisper branch.
-- Frontend changes.
-
-## Why not just swap to another HF model
-
-Every NLLB variant on HF serverless is in the same deprecated bucket right now. An LLM-based translation via the HF router (or Groq) is the lowest-friction working path and uses tokens you already have.
+- No automatic translation after transcription (manual button only).
+- No LLM fallback for Pidgin — Whisper translations endpoint handles all three languages; Pidgin quality is accepted as-is.
+- No changes to language selector, recorder, or styling tokens beyond adding the new button + panel using existing classes.
