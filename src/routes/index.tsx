@@ -83,8 +83,13 @@ function Index() {
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
       if (!raw) return;
-      const saved = JSON.parse(raw) as { transcript?: string; language?: string };
+      const saved = JSON.parse(raw) as {
+        transcript?: string;
+        translation?: string;
+        language?: string;
+      };
       if (saved.transcript) setTranscript(saved.transcript);
+      if (saved.translation) setTranslation(saved.translation);
       if (saved.language && LANGUAGES.some((l) => l.code === saved.language)) {
         setLanguage(saved.language);
       }
@@ -93,17 +98,17 @@ function Index() {
     }
   }, []);
 
-  // Persist transcript + language
+  // Persist transcript + translation + language
   useEffect(() => {
     try {
       localStorage.setItem(
         STORAGE_KEY,
-        JSON.stringify({ transcript, language }),
+        JSON.stringify({ transcript, translation, language }),
       );
     } catch {
       /* ignore */
     }
-  }, [transcript, language]);
+  }, [transcript, translation, language]);
 
   // Revoke object URL on change/unmount
   useEffect(() => {
