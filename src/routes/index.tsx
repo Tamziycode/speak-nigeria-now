@@ -135,10 +135,13 @@ function Index() {
     async (file: File) => {
       setState("processing");
       setError(null);
+      setTranslation("");
+      lastAudioFileRef.current = file;
       try {
         const form = new FormData();
         form.append("file", file);
         form.append("language", language);
+        form.append("mode", "transcribe");
 
         const res = await fetch("/api/transcribe", {
           method: "POST",
@@ -173,6 +176,50 @@ function Index() {
     },
     [language],
   );
+
+  const translateToEnglish = useCallback(async () => {
+    const file = lastAudioFileRef.current;
+    if (!file) {
+      setError("Record or upload audio first.");
+      return;
+    }
+    setError(null);
+    setTranslating(true);
+    try {
+      const form = new FormData();
+      form.append("file", file);
+      form.append("mode", "translate");
+      form.append("language", language);
+
+      const res = await fetch("/api/transcribe", {
+        method: "POST",
+        body: form,
+      });
+      const json = await res
+        .json()
+        .catch(() => ({ error: "Invalid response from server" }));
+
+      if (!res.ok) {
+        const errField = (json as { error?: unknown }).error;
+        const msg =
+          typeof errField === "string"
+            ? errField
+            : `Translation failed (${res.status})`;
+        setError(msg);
+        return;
+      }
+
+      const text =
+        typeof (json as { text?: unknown }).text === "string"
+          ? (json as { text: string }).text.trim()
+          : "";
+      setTranslation(text);
+    } catch (e) {
+      setError((e as Error).message || "Network error. Please try again.");
+    } finally {
+      setTranslating(false);
+    }
+  }, [language]);
 
   const startRecording = useCallback(async () => {
     setError(null);
