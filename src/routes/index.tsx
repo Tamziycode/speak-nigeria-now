@@ -137,6 +137,7 @@ function Index() {
       setState("processing");
       setError(null);
       setTranslation("");
+      translatedForFileRef.current = null;
       lastAudioFileRef.current = file;
       try {
         const form = new FormData();
