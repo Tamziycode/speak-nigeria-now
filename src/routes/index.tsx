@@ -70,6 +70,7 @@ function Index() {
   const timerRef = useRef<number | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const lastAudioFileRef = useRef<File | null>(null);
+  const translatedForFileRef = useRef<File | null>(null);
 
   // API health
   useEffect(() => {
