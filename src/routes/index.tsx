@@ -222,6 +222,7 @@ function Index() {
           ? (json as { text: string }).text.trim()
           : "";
       setTranslation(text);
+      translatedForFileRef.current = file;
     } catch (e) {
       setError((e as Error).message || "Network error. Please try again.");
     } finally {
