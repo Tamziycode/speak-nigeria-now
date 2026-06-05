@@ -9,6 +9,7 @@ import {
   Download,
   Upload,
   X,
+  Languages,
 } from "lucide-react";
 import { blobTo16kWav } from "@/lib/recorder";
 
