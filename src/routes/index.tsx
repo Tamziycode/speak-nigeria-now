@@ -70,6 +70,7 @@ function Index() {
   const timerRef = useRef<number | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const lastAudioFileRef = useRef<File | null>(null);
+  const translatedForFileRef = useRef<File | null>(null);
 
   // API health
   useEffect(() => {
@@ -136,6 +137,7 @@ function Index() {
       setState("processing");
       setError(null);
       setTranslation("");
+      translatedForFileRef.current = null;
       lastAudioFileRef.current = file;
       try {
         const form = new FormData();
@@ -183,6 +185,12 @@ function Index() {
       setError("Record or upload audio first.");
       return;
     }
+    // Cache: if we already translated this exact audio, keep the existing result.
+    // Whisper sampling makes repeated calls return slightly different text even
+    // at temperature 0, so we deliberately do not re-run for the same file.
+    if (translatedForFileRef.current === file && translation) {
+      return;
+    }
     setError(null);
     setTranslating(true);
     try {
@@ -214,12 +222,13 @@ function Index() {
           ? (json as { text: string }).text.trim()
           : "";
       setTranslation(text);
+      translatedForFileRef.current = file;
     } catch (e) {
       setError((e as Error).message || "Network error. Please try again.");
     } finally {
       setTranslating(false);
     }
-  }, [language]);
+  }, [language, translation]);
 
   const startRecording = useCallback(async () => {
     setError(null);
