@@ -573,6 +573,19 @@ function Index() {
                     <Download className="h-3.5 w-3.5" />
                     Download .txt
                   </button>
+                  <button
+                    type="button"
+                    onClick={translateToEnglish}
+                    disabled={!lastAudioFileRef.current || translating || busy}
+                    className="inline-flex items-center gap-1.5 rounded-md border border-primary bg-primary px-2.5 py-1 text-xs font-semibold text-primary-foreground transition hover:opacity-90 disabled:opacity-40"
+                  >
+                    {translating ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    ) : (
+                      <Languages className="h-3.5 w-3.5" />
+                    )}
+                    {translating ? "Translating…" : "Translate to English"}
+                  </button>
                 </div>
               </div>
               <textarea
@@ -591,6 +604,56 @@ function Index() {
               </div>
             </div>
           </div>
+
+          {/* English translation */}
+          {(translation || translating) && (
+            <div className="w-full">
+              <div className="rounded-lg border border-border bg-card p-5 shadow-sm">
+                <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                  <h2 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                    English Translation
+                  </h2>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={handleCopyTranslation}
+                      disabled={!translation}
+                      className="inline-flex items-center gap-1.5 rounded-md border border-border bg-card px-2.5 py-1 text-xs font-medium text-foreground transition hover:bg-accent disabled:opacity-40"
+                    >
+                      {copiedTranslation ? (
+                        <>
+                          <Check className="h-3.5 w-3.5" /> Copied
+                        </>
+                      ) : (
+                        <>
+                          <Copy className="h-3.5 w-3.5" /> Copy
+                        </>
+                      )}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleDownloadTranslation}
+                      disabled={!translation}
+                      className="inline-flex items-center gap-1.5 rounded-md border border-border bg-card px-2.5 py-1 text-xs font-medium text-foreground transition hover:bg-accent disabled:opacity-40"
+                    >
+                      <Download className="h-3.5 w-3.5" />
+                      Download .txt
+                    </button>
+                  </div>
+                </div>
+                <textarea
+                  value={translation}
+                  onChange={(e) => setTranslation(e.target.value)}
+                  placeholder={translating ? "Translating…" : ""}
+                  className="min-h-[140px] w-full resize-y rounded-md border border-border bg-background p-3 text-base leading-relaxed text-foreground focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
+                />
+                <div className="mt-2 flex justify-end gap-4 text-xs text-muted-foreground">
+                  <span>{translationWordCount} words</span>
+                  <span>{translationCharCount} characters</span>
+                </div>
+              </div>
+            </div>
+          )}
         </section>
       </main>
     </div>
