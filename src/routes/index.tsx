@@ -228,7 +228,7 @@ function Index() {
     } finally {
       setTranslating(false);
     }
-  }, [language]);
+  }, [language, translation]);
 
   const startRecording = useCallback(async () => {
     setError(null);
