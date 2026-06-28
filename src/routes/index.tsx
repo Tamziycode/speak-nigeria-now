@@ -517,7 +517,7 @@ function Index() {
                 <button
                   type="button"
                   onClick={stopRecording}
-                  className="inline-flex h-11 items-center gap-2 rounded-md bg-red-600 px-6 text-sm font-semibold text-white shadow-sm transition hover:bg-red-700"
+                  className="rec-ring inline-flex h-11 items-center gap-2 rounded-md bg-red-600 px-6 text-sm font-semibold text-white shadow-sm transition hover:bg-red-700"
                 >
                   <Square className="h-4 w-4 fill-current" />
                   Stop Recording
