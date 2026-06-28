@@ -234,7 +234,17 @@ function Index() {
       setTranslation(text);
       translatedForFileRef.current = file;
     } catch (e) {
-      setError((e as Error).message || "Network error. Please try again.");
+      const err = e as Error;
+      if (typeof navigator !== "undefined" && navigator.onLine === false) {
+        setError("You appear to be offline. Reconnect and try again.");
+      } else if (err.name === "AbortError") {
+        setError("Translation was cancelled before it completed.");
+      } else {
+        setError(
+          err.message ||
+            "Could not reach the translation service. Please try again.",
+        );
+      }
     } finally {
       setTranslating(false);
     }
