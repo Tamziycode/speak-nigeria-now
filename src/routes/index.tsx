@@ -172,7 +172,17 @@ function Index() {
         setTranscript(text);
         setState("idle");
       } catch (e) {
-        setError((e as Error).message || "Network error. Please try again.");
+        const err = e as Error;
+        if (typeof navigator !== "undefined" && navigator.onLine === false) {
+          setError("You appear to be offline. Reconnect and try again.");
+        } else if (err.name === "AbortError") {
+          setError("Request was cancelled before it completed.");
+        } else {
+          setError(
+            err.message ||
+              "Could not reach the transcription service. Please try again.",
+          );
+        }
         setState("idle");
       }
     },
@@ -224,7 +234,17 @@ function Index() {
       setTranslation(text);
       translatedForFileRef.current = file;
     } catch (e) {
-      setError((e as Error).message || "Network error. Please try again.");
+      const err = e as Error;
+      if (typeof navigator !== "undefined" && navigator.onLine === false) {
+        setError("You appear to be offline. Reconnect and try again.");
+      } else if (err.name === "AbortError") {
+        setError("Translation was cancelled before it completed.");
+      } else {
+        setError(
+          err.message ||
+            "Could not reach the translation service. Please try again.",
+        );
+      }
     } finally {
       setTranslating(false);
     }
@@ -280,10 +300,24 @@ function Index() {
       timerRef.current = window.setInterval(() => {
         setElapsed((Date.now() - startTimeRef.current) / 1000);
       }, 100);
-    } catch {
-      setError(
-        "Microphone access denied. Please allow microphone access and try again.",
-      );
+    } catch (e) {
+      const err = e as Error;
+      if (err.name === "NotAllowedError" || err.name === "SecurityError") {
+        setError(
+          "Microphone access denied. Update your browser permissions to enable real-time audio capture.",
+        );
+      } else if (
+        err.name === "NotFoundError" ||
+        err.name === "OverconstrainedError"
+      ) {
+        setError(
+          "No microphone detected. Connect an input device and try again.",
+        );
+      } else {
+        setError(
+          err.message || "Could not start the microphone. Please try again.",
+        );
+      }
     }
   }, [sendForTranscription]);
 
@@ -298,11 +332,15 @@ function Index() {
     const name = file.name.toLowerCase();
     const extOk = ACCEPTED_EXTS.some((e) => name.endsWith(e));
     const typeOk = ACCEPTED_TYPES.includes(file.type);
+    if (file.size === 0) {
+      return "That file is empty (0 bytes). Choose a valid audio recording.";
+    }
     if (!extOk && !typeOk) {
       return "Unsupported file type. Please upload a .wav, .mp3, or .m4a file.";
     }
     if (file.size > MAX_BYTES) {
-      return "File exceeds the 25 MB size limit.";
+      const mb = (file.size / (1024 * 1024)).toFixed(1);
+      return `File is ${mb} MB — the 25 MB limit was exceeded. Try a shorter clip.`;
     }
     return null;
   };
@@ -322,7 +360,13 @@ function Index() {
   );
 
   const onFileInput = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const f = e.target.files?.[0];
+    const files = e.target.files;
+    if (files && files.length > 1) {
+      setError("Please select a single audio file.");
+      e.target.value = "";
+      return;
+    }
+    const f = files?.[0];
     if (f) handleFile(f);
     e.target.value = "";
   };
@@ -330,7 +374,12 @@ function Index() {
   const onDrop = (e: React.DragEvent) => {
     e.preventDefault();
     setDragOver(false);
-    const f = e.dataTransfer.files?.[0];
+    const files = e.dataTransfer.files;
+    if (files && files.length > 1) {
+      setError("Please drop a single audio file — multiple files were detected.");
+      return;
+    }
+    const f = files?.[0];
     if (f) handleFile(f);
   };
 
@@ -468,7 +517,7 @@ function Index() {
                 <button
                   type="button"
                   onClick={stopRecording}
-                  className="inline-flex h-11 items-center gap-2 rounded-md bg-red-600 px-6 text-sm font-semibold text-white shadow-sm transition hover:bg-red-700"
+                  className="rec-ring inline-flex h-11 items-center gap-2 rounded-md bg-red-600 px-6 text-sm font-semibold text-white shadow-sm transition hover:bg-red-700"
                 >
                   <Square className="h-4 w-4 fill-current" />
                   Stop Recording
@@ -597,16 +646,21 @@ function Index() {
                   </button>
                 </div>
               </div>
-              <textarea
-                value={transcript}
-                onChange={(e) => setTranscript(e.target.value)}
-                placeholder={
-                  state === "processing"
-                    ? "Transcribing…"
-                    : "Your transcription will appear here. You can edit it freely."
-                }
-                className="min-h-[180px] w-full resize-y rounded-md border border-border bg-background p-3 text-base leading-relaxed text-foreground focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
-              />
+              {state === "processing" && !transcript ? (
+                <div className="flex min-h-[180px] flex-col gap-3 rounded-md border border-border bg-background p-3">
+                  <div className="shimmer-bar h-4 w-[92%]" />
+                  <div className="shimmer-bar h-4 w-[78%]" />
+                  <div className="shimmer-bar h-4 w-[85%]" />
+                  <div className="shimmer-bar h-4 w-[60%]" />
+                </div>
+              ) : (
+                <textarea
+                  value={transcript}
+                  onChange={(e) => setTranscript(e.target.value)}
+                  placeholder="Your transcription will appear here. You can edit it freely."
+                  className="min-h-[180px] w-full resize-y rounded-md border border-border bg-background p-3 text-base leading-relaxed text-foreground focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
+                />
+              )}
               <div className="mt-2 flex justify-end gap-4 text-xs text-muted-foreground">
                 <span>{wordCount} words</span>
                 <span>{charCount} characters</span>
@@ -650,12 +704,20 @@ function Index() {
                     </button>
                   </div>
                 </div>
-                <textarea
-                  value={translation}
-                  onChange={(e) => setTranslation(e.target.value)}
-                  placeholder={translating ? "Translating…" : ""}
-                  className="min-h-[140px] w-full resize-y rounded-md border border-border bg-background p-3 text-base leading-relaxed text-foreground focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
-                />
+                {translating && !translation ? (
+                  <div className="flex min-h-[140px] flex-col gap-3 rounded-md border border-border bg-background p-3">
+                    <div className="shimmer-bar h-4 w-[88%]" />
+                    <div className="shimmer-bar h-4 w-[70%]" />
+                    <div className="shimmer-bar h-4 w-[80%]" />
+                  </div>
+                ) : (
+                  <textarea
+                    value={translation}
+                    onChange={(e) => setTranslation(e.target.value)}
+                    placeholder=""
+                    className="min-h-[140px] w-full resize-y rounded-md border border-border bg-background p-3 text-base leading-relaxed text-foreground focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
+                  />
+                )}
                 <div className="mt-2 flex justify-end gap-4 text-xs text-muted-foreground">
                   <span>{translationWordCount} words</span>
                   <span>{translationCharCount} characters</span>
