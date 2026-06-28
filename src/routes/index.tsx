@@ -646,16 +646,21 @@ function Index() {
                   </button>
                 </div>
               </div>
-              <textarea
-                value={transcript}
-                onChange={(e) => setTranscript(e.target.value)}
-                placeholder={
-                  state === "processing"
-                    ? "Transcribing…"
-                    : "Your transcription will appear here. You can edit it freely."
-                }
-                className="min-h-[180px] w-full resize-y rounded-md border border-border bg-background p-3 text-base leading-relaxed text-foreground focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
-              />
+              {state === "processing" && !transcript ? (
+                <div className="flex min-h-[180px] flex-col gap-3 rounded-md border border-border bg-background p-3">
+                  <div className="shimmer-bar h-4 w-[92%]" />
+                  <div className="shimmer-bar h-4 w-[78%]" />
+                  <div className="shimmer-bar h-4 w-[85%]" />
+                  <div className="shimmer-bar h-4 w-[60%]" />
+                </div>
+              ) : (
+                <textarea
+                  value={transcript}
+                  onChange={(e) => setTranscript(e.target.value)}
+                  placeholder="Your transcription will appear here. You can edit it freely."
+                  className="min-h-[180px] w-full resize-y rounded-md border border-border bg-background p-3 text-base leading-relaxed text-foreground focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
+                />
+              )}
               <div className="mt-2 flex justify-end gap-4 text-xs text-muted-foreground">
                 <span>{wordCount} words</span>
                 <span>{charCount} characters</span>
@@ -699,12 +704,20 @@ function Index() {
                     </button>
                   </div>
                 </div>
-                <textarea
-                  value={translation}
-                  onChange={(e) => setTranslation(e.target.value)}
-                  placeholder={translating ? "Translating…" : ""}
-                  className="min-h-[140px] w-full resize-y rounded-md border border-border bg-background p-3 text-base leading-relaxed text-foreground focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
-                />
+                {translating && !translation ? (
+                  <div className="flex min-h-[140px] flex-col gap-3 rounded-md border border-border bg-background p-3">
+                    <div className="shimmer-bar h-4 w-[88%]" />
+                    <div className="shimmer-bar h-4 w-[70%]" />
+                    <div className="shimmer-bar h-4 w-[80%]" />
+                  </div>
+                ) : (
+                  <textarea
+                    value={translation}
+                    onChange={(e) => setTranslation(e.target.value)}
+                    placeholder=""
+                    className="min-h-[140px] w-full resize-y rounded-md border border-border bg-background p-3 text-base leading-relaxed text-foreground focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
+                  />
+                )}
                 <div className="mt-2 flex justify-end gap-4 text-xs text-muted-foreground">
                   <span>{translationWordCount} words</span>
                   <span>{translationCharCount} characters</span>
